@@ -68,7 +68,8 @@ pub type StorageCheck = Arc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = Result<()
 pub struct Options {
     /// Storage directory. Defaults to memory (native).
     pub dir: Option<Arc<dyn BlobDir>>,
-    /// Quota check, called on reception as soon as the size is known.
+    /// Quota check, called on `ImportBao` before any entry or file is
+    /// created, so a rejection leaves nothing behind.
     pub storage_check: Option<StorageCheck>,
 }
 
@@ -90,6 +91,14 @@ struct EntryShared {
     outboard: crate::file::BlobFileImpl,
     /// Current bitfield (validated ranges + size), observable.
     watch: tokio::sync::watch::Sender<Bitfield>,
+}
+
+impl EntryShared {
+    /// Releases the underlying handles (OPFS locks on wasm).
+    fn close(&self) {
+        self.data.close();
+        self.outboard.close();
+    }
 }
 
 type Entry = Arc<EntryShared>;
@@ -260,6 +269,7 @@ impl Actor {
     async fn remove_entry(&mut self, hash: &Hash) {
         let entry = self.entries.lock().unwrap().remove(hash);
         if let Some(entry) = entry {
+            entry.close();
             let _ = self.dir.remove(&entry.names.0).await;
             let _ = self.dir.remove(&entry.names.1).await;
         }
@@ -300,6 +310,10 @@ impl Actor {
         if let Some(shutdown) = shutdown {
             shutdown.tx.send(()).await.ok();
         }
+        // Release all remaining handles (OPFS locks on wasm).
+        for (_, entry) in self.entries.lock().unwrap().drain() {
+            entry.close();
+        }
     }
 
     async fn finish_import(&mut self, res: Result<ImportEntry, api::Error>) {
@@ -323,7 +337,9 @@ impl Actor {
                     }));
                 }
                 std::collections::hash_map::Entry::Occupied(_) => {
-                    // already present: delete the temporary files
+                    // already present: close and delete the temporary files
+                    entry.data.close();
+                    entry.outboard.close();
                     let dir = self.dir.clone();
                     let names = entry.names.clone();
                     n0_future::task::spawn(async move {
@@ -370,6 +386,15 @@ impl Actor {
             }
             Command::ImportBao(msg) => {
                 let proto::ImportBaoMsg { inner, rx, tx, .. } = msg;
+                // Quota check before creating anything: the size is known
+                // from the request (bao header), so a rejection leaves no
+                // entry and no file behind.
+                if let Some(check) = &self.storage_check {
+                    if let Err(msg) = check(inner.size.get()).await {
+                        tx.send(Err(api::Error::other(msg))).await.ok();
+                        return None;
+                    }
+                }
                 let entry = match self.get_or_create_entry(inner.hash).await {
                     Ok(entry) => entry,
                     Err(err) => {
@@ -382,11 +407,8 @@ impl Actor {
                     tx.send(Ok(())).await.ok();
                     return None;
                 }
-                let storage_check = self.storage_check.clone();
                 self.spawn(async move {
-                    if let Err(e) = import_bao(entry, inner.size, rx, tx, storage_check).await {
-                        error!("import_bao failed: {e}");
-                    }
+                    import_bao(entry, inner.size, rx, tx).await;
                 });
             }
             Command::Observe(msg) => {
@@ -718,54 +740,50 @@ async fn import_byte_stream(
 }
 
 /// Download: sparse validated writes into the data/outboard files, bitfield
-/// updated as items arrive (observable via `Observe`).
+/// updated as items arrive (observable via `Observe`). Every failure is sent
+/// to the caller through `tx`; a partial entry is kept for later resumption.
 async fn import_bao(
     entry: Entry,
     size: std::num::NonZeroU64,
     mut stream: irpc::channel::mpsc::Receiver<BaoContentItem>,
     tx: irpc::channel::oneshot::Sender<api::Result<()>>,
-    storage_check: Option<StorageCheck>,
-) -> Result<(), api::Error> {
-    // Quota check as soon as the size is known, before any write.
-    if let Some(check) = &storage_check {
-        if let Err(msg) = check(size.get()).await {
-            tx.send(Err(api::Error::other(msg))).await.ok();
-            return Ok(());
-        }
-    }
+) {
     let size = size.get();
     entry.watch.send_if_modified(|bf| {
         bf.update(&Bitfield::new(ChunkRanges::empty(), size))
             .changed()
     });
     let tree = BaoTree::new(size, IROH_BLOCK_SIZE);
-    while let Ok(Some(item)) = stream.recv().await {
-        match item {
-            BaoContentItem::Parent(parent) => {
-                if let Some(offset) = tree.pre_order_offset(parent.node) {
-                    let mut pair = [0u8; 64];
-                    pair[..32].copy_from_slice(parent.pair.0.as_bytes());
-                    pair[32..].copy_from_slice(parent.pair.1.as_bytes());
+    let result: io::Result<()> = async {
+        loop {
+            let Some(item) = stream.recv().await.map_err(io::Error::other)? else {
+                break;
+            };
+            match item {
+                BaoContentItem::Parent(parent) => {
+                    if let Some(offset) = tree.pre_order_offset(parent.node) {
+                        let mut pair = [0u8; 64];
+                        pair[..32].copy_from_slice(parent.pair.0.as_bytes());
+                        pair[32..].copy_from_slice(parent.pair.1.as_bytes());
+                        entry.outboard.write_all_at(offset * 64, &pair)?;
+                    }
+                }
+                BaoContentItem::Leaf(leaf) => {
+                    entry.data.write_all_at(leaf.offset, &leaf.data)?;
+                    let added = chunk_range(&leaf);
                     entry
-                        .outboard
-                        .write_all_at(offset * 64, &pair)
-                        .map_err(api::Error::Io)?;
+                        .watch
+                        .send_if_modified(|bf| bf.update(&Bitfield::new(added, size)).changed());
                 }
             }
-            BaoContentItem::Leaf(leaf) => {
-                entry
-                    .data
-                    .write_all_at(leaf.offset, &leaf.data)
-                    .map_err(api::Error::Io)?;
-                let added = chunk_range(&leaf);
-                entry
-                    .watch
-                    .send_if_modified(|bf| bf.update(&Bitfield::new(added, size)).changed());
-            }
         }
+        Ok(())
     }
-    tx.send(Ok(())).await.ok();
-    Ok(())
+    .await;
+    match result {
+        Ok(()) => tx.send(Ok(())).await.ok(),
+        Err(err) => tx.send(Err(api::Error::Io(err))).await.ok(),
+    };
 }
 
 async fn export_bao(
@@ -1204,6 +1222,7 @@ mod tests {
 
     #[tokio::test]
     async fn storage_check_rejects_oversized() -> TestResult {
+        use crate::file::MemDir;
         let limit: u64 = 64 * 1024;
         let check: StorageCheck = Arc::new(move |size| {
             Box::pin(async move {
@@ -1214,8 +1233,9 @@ mod tests {
                 }
             })
         });
+        let dir = Arc::new(MemDir::new());
         let store: api::Store = LocalStore::new_with_opts(Options {
-            dir: None,
+            dir: Some(dir.clone()),
             storage_check: Some(check),
         })
         .into();
@@ -1223,11 +1243,14 @@ mod tests {
         let data = vec![9u8; 128 * 1024];
         let (hash, bao) = reference_bao(&data, &ChunkRanges::all());
 
-        // rejection: size > quota
+        // rejection: size > quota, and nothing is left behind
         let err = store
             .import_bao_bytes(hash, ChunkRanges::all(), bao.clone())
             .await;
         assert!(err.is_err(), "expected quota rejection");
+        assert!(matches!(store.status(hash).await?, BlobStatus::NotFound));
+        assert!(dir.contents(&format!("{hash}.data")).is_empty());
+        assert!(dir.contents(&format!("{hash}.out")).is_empty());
 
         // accepted under the limit
         let small = vec![1u8; 1024];

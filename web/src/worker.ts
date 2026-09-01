@@ -157,17 +157,17 @@ async function handle(msg: ToWorker): Promise<unknown> {
     case "import":
       return node!.import(msg.data);
     case "import_begin":
-      return node!.import_begin(msg.name, msg.size);
+      return node!.import_begin(msg.size);
     case "import_chunk":
       return node!.import_chunk(msg.importId, msg.data);
     case "import_finish":
       return node!.import_finish(msg.importId);
     case "import_abort":
       return node!.import_abort(msg.importId);
-    case "import_progress":
-      return node!.import_progress(msg.importId);
     case "download":
       return node!.download(msg.ticket);
+    case "short_ticket":
+      return node!.short_ticket(msg.ticket);
     case "hash_from_ticket":
       return node!.hash_from_ticket(msg.ticket);
     case "status":

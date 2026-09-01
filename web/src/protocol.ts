@@ -4,12 +4,12 @@ export type ToWorker =
   | { kind: "spawn" }
   | { kind: "endpoint_id" }
   | { kind: "import"; data: Uint8Array }
-  | { kind: "import_begin"; name: string; size: number }
+  | { kind: "import_begin"; size: number }
   | { kind: "import_chunk"; importId: number; data: Uint8Array }
   | { kind: "import_finish"; importId: number }
   | { kind: "import_abort"; importId: number }
-  | { kind: "import_progress"; importId: number }
   | { kind: "download"; ticket: string }
+  | { kind: "short_ticket"; ticket: string }
   | { kind: "hash_from_ticket"; ticket: string }
   | { kind: "status"; hash: string }
   | { kind: "save"; hash: string }

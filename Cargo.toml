@@ -21,6 +21,7 @@ bao-tree = { version = "0.16", default-features = false, features = ["experiment
 bytes = "1.10.1"
 clap = { version = "4.5", features = ["derive"], optional = true }
 console_error_panic_hook = "0.1.7"
+data-encoding = "2.8.0"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # Versions pinned to the known-good set of the n0-computer/iroh-examples/browser-blobs example
 iroh = { version = "1.0.0", default-features = false, features = ["tls-ring"] }

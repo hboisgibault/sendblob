@@ -3250,6 +3250,7 @@ dependencies = [
  "bytes",
  "clap",
  "console_error_panic_hook",
+ "data-encoding",
  "getrandom 0.3.4",
  "iroh",
  "iroh-blobs",

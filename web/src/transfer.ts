@@ -14,21 +14,12 @@ export interface TransferProgress {
 /** Size of the chunks streamed to the worker (4 MiB, cf. Rust CHUNK_SIZE). */
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
-/** Progress polling interval (ms). */
-const PROGRESS_INTERVAL = 150;
-
 export async function sendFile(
   rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
   file: File,
   onProgress?: (p: TransferProgress) => void,
 ): Promise<string> {
-  const id = await rpc.call<number>({
-    kind: "import_begin",
-    name: file.name,
-    size: file.size,
-  });
-
-  const stopPolling = pollProgress(rpc, id, file.size, onProgress);
+  const id = await rpc.call<number>({ kind: "import_begin", size: file.size });
   try {
     for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
       const end = Math.min(offset + CHUNK_SIZE, file.size);
@@ -36,13 +27,12 @@ export async function sendFile(
       await rpc.call({ kind: "import_chunk", importId: id, data: new Uint8Array(buffer) }, [
         buffer,
       ]);
+      onProgress?.({ bytesDone: end, bytesTotal: file.size });
     }
     const ticket = await rpc.call<string>({ kind: "import_finish", importId: id });
-    stopPolling();
     onProgress?.({ bytesDone: file.size, bytesTotal: file.size });
     return ticket;
   } catch (err) {
-    stopPolling();
     await rpc.call({ kind: "import_abort", importId: id }).catch(() => {});
     throw err;
   }
@@ -99,29 +89,6 @@ export async function receiveFile(
   };
 }
 
-function pollProgress(
-  rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
-  id: number,
-  total: number,
-  onProgress?: (p: TransferProgress) => void,
-): () => void {
-  if (!onProgress) return () => {};
-  let finished = false;
-  const timer = setInterval(async () => {
-    if (finished) return;
-    try {
-      const done = await rpc.call<number>({ kind: "import_progress", importId: id });
-      if (!finished) onProgress({ bytesDone: done, bytesTotal: total });
-    } catch {
-      /* the import may finish between two ticks */
-    }
-  }, PROGRESS_INTERVAL);
-  return () => {
-    finished = true;
-    clearInterval(timer);
-  };
-}
-
 function pollStatus(
   rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
   hash: string,
@@ -148,6 +115,6 @@ function pollStatus(
     } catch {
       /* next tick */
     }
-  }, PROGRESS_INTERVAL);
+  }, 150);
   return () => clearInterval(timer);
 }

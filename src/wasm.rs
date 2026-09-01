@@ -50,11 +50,7 @@ pub fn version() -> String {
 
 struct PendingImport {
     tx: mpsc::Sender<iroh_blobs::api::proto::ImportByteStreamUpdate>,
-    /// Bytes received so far (for progress).
-    copied: Arc<Mutex<u64>>,
     result: tokio::sync::oneshot::Receiver<Result<Hash, String>>,
-    #[allow(dead_code)]
-    name: String,
 }
 
 fn next_import_id() -> u32 {
@@ -142,6 +138,33 @@ pub struct BlobsNode {
     local: LocalStore,
 }
 
+/// Snapshot of a blob status, serialized to a plain JS object for the UI.
+struct BlobStatus {
+    /// `"not_found"`, `"partial"` or `"complete"`.
+    state: &'static str,
+    /// Validated bytes in the local store.
+    bytes_done: u64,
+    /// Total size, known only when complete.
+    size: Option<u64>,
+}
+
+impl BlobStatus {
+    fn to_js(&self) -> JsValue {
+        let obj = js_sys::Object::new();
+        let set = |key: &str, value: JsValue| -> Result<(), JsValue> {
+            js_sys::Reflect::set(&obj, &key.into(), &value).map(|_| ())
+        };
+        set("state", self.state.into())
+            .and_then(|_| set("bytesDone", JsValue::from_f64(self.bytes_done as f64)))
+            .and_then(|_| match self.size {
+                Some(size) => set("size", JsValue::from_f64(size as f64)),
+                None => set("size", JsValue::NULL),
+            })
+            .expect("status object keys are valid");
+        obj.into()
+    }
+}
+
 #[wasm_bindgen]
 impl BlobsNode {
     /// Spawns a node backed by the OPFS store, in the `sendblob/<subdir>`
@@ -189,21 +212,20 @@ impl BlobsNode {
     }
 
     /// Starts a streamed import, returns the id to pass to
-    /// `import_chunk` / `import_finish` / `import_progress`.
-    pub async fn import_begin(&self, name: String, size: f64) -> Result<u32, JsError> {
+    /// `import_chunk` / `import_finish` / `import_abort`. Progress is tracked
+    /// on the JS side (bytes pushed to `import_chunk`).
+    pub async fn import_begin(&self, size: f64) -> Result<u32, JsError> {
         // Pre-check the quota before pushing a single byte (the store only
         // checks the network path import_bao, not add_stream).
         let size = size as u64;
         check_storage(size).await.map_err(|e| JsError::new(&e))?;
         let (tx, rx) = mpsc::channel(8);
-        let copied = Arc::new(Mutex::new(0u64));
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         let id = next_import_id();
 
         // Consumer task: add_stream writes the chunks into OPFS as they
         // arrive and ends with Done(hash).
         let store: iroh_blobs::api::Store = self.local.clone().into();
-        let copied_task = copied.clone();
         n0_future::task::spawn(async move {
             use n0_future::StreamExt;
             let progress = store.blobs().add_stream(ChunkStream(rx));
@@ -211,9 +233,6 @@ impl BlobsNode {
             let mut stream = progress.await.stream().await;
             while let Some(item) = stream.next().await {
                 match item {
-                    iroh_blobs::api::proto::AddProgressItem::CopyProgress(offset) => {
-                        *copied_task.lock().unwrap() = offset;
-                    }
                     iroh_blobs::api::proto::AddProgressItem::Done(tag) => {
                         result = Ok(tag.hash());
                         break;
@@ -232,9 +251,7 @@ impl BlobsNode {
             id,
             PendingImport {
                 tx,
-                copied,
                 result: result_rx,
-                name,
             },
         );
         Ok(id)
@@ -246,12 +263,11 @@ impl BlobsNode {
             .lock()
             .unwrap()
             .get(&id)
-            .map(|p| (p.tx.clone(), p.copied.clone()));
-        let Some((tx, copied)) = pending else {
+            .map(|p| p.tx.clone());
+        let Some(tx) = pending else {
             return Err(JsError::new("unknown or finished import"));
         };
         let bytes = uint8array_to_bytes(&data);
-        *copied.lock().unwrap() += bytes.len() as u64;
         tx.send(iroh_blobs::api::proto::ImportByteStreamUpdate::Bytes(bytes))
             .await
             .map_err(|_| JsError::new("import interrupted"))?;
@@ -289,40 +305,111 @@ impl BlobsNode {
         }
     }
 
-    /// Bytes copied so far for an in-progress import.
-    pub fn import_progress(&self, id: u32) -> f64 {
-        pending_imports()
-            .lock()
-            .unwrap()
-            .get(&id)
-            .map(|p| *p.copied.lock().unwrap() as f64)
-            .unwrap_or(0.0)
+    /// Compact share-link payload for a full ticket (see
+    /// [`crate::node::encode_compact`]).
+    pub fn short_ticket(&self, ticket: String) -> Result<String, JsError> {
+        let ticket: BlobTicket = ticket.parse().map_err(to_js_err)?;
+        Ok(crate::node::encode_compact(&ticket))
     }
 
-    /// Downloads from a ticket, returns the hash at completion.
+    /// Downloads from a full ticket (`blob…`) or a compact link payload,
+    /// returns the hash at completion.
     pub async fn download(&self, ticket: String) -> Result<String, JsError> {
-        let ticket: BlobTicket = ticket.parse().map_err(to_js_err)?;
-        let hash = self.node.download(ticket).await.map_err(to_js_err)?;
+        let (id, hash, format) = crate::node::parse_ticket(&ticket).map_err(to_js_err)?;
+        let hash = self
+            .node
+            .download_parts(id, hash, format)
+            .await
+            .map_err(to_js_err)?;
         Ok(hash.to_string())
     }
 
-    /// Hash extracted from a ticket, without starting a download (for progress).
+    /// Hash extracted from a ticket (full or compact), without starting a
+    /// download (for progress).
     pub fn hash_from_ticket(&self, ticket: String) -> Result<String, JsError> {
-        let ticket: BlobTicket = ticket.parse().map_err(to_js_err)?;
-        Ok(ticket.hash().to_string())
+        let (_, hash, _) = crate::node::parse_ticket(&ticket).map_err(to_js_err)?;
+        Ok(hash.to_string())
     }
 
-    /// Blob status: "not_found", "partial:<bytes received>", "complete:<size>".
-    pub async fn status(&self, hash: String) -> Result<String, JsError> {
+    /// Subscribes to the progress of a blob (bitfield updates of the local
+    /// store). `callback` is invoked with plain JS objects
+    /// `{ bytesDone, bytesTotal, complete }` — same shape as the `progress`
+    /// events forwarded by the worker. Returns a subscription id to pass to
+    /// [`BlobsNode::unobserve`]; the subscription also ends by itself once
+    /// the blob is complete.
+    pub fn observe(&self, hash: String, callback: js_sys::Function) -> Result<u32, JsError> {
+        let hash: Hash = hash.parse().map_err(to_js_err)?;
+        let store = self.node.blobs.clone();
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let id = next_observe_id();
+        observables().lock().unwrap().insert(id, cancel_tx);
+        n0_future::task::spawn(async move {
+            use n0_future::StreamExt;
+            let Ok(mut stream) = store.observe(hash).stream().await else {
+                observables().lock().unwrap().remove(&id);
+                return;
+            };
+            let mut cancel = std::pin::pin!(cancel_rx);
+            loop {
+                tokio::select! {
+                    _ = &mut cancel => break,
+                    item = stream.next() => {
+                        let Some(bitfield) = item else { break };
+                        let update = js_sys::Object::new();
+                        let set = |key: &str, value: JsValue| -> Result<(), JsValue> {
+                            js_sys::Reflect::set(&update, &key.into(), &value).map(|_| ())
+                        };
+                        set("bytesDone", JsValue::from_f64(bitfield.total_bytes() as f64))
+                            .and_then(|_| match bitfield.is_complete() {
+                                true => set("bytesTotal", JsValue::from_f64(bitfield.size() as f64)),
+                                false => set("bytesTotal", JsValue::NULL),
+                            })
+                            .and_then(|_| {
+                                set("complete", JsValue::from_bool(bitfield.is_complete()))
+                            })
+                            .expect("progress object keys are valid");
+                        let _ = callback.call1(&JsValue::NULL, &update.into());
+                        if bitfield.is_complete() {
+                            break;
+                        }
+                    }
+                }
+            }
+            observables().lock().unwrap().remove(&id);
+        });
+        Ok(id)
+    }
+
+    /// Cancels a progress subscription (see [`BlobsNode::observe`]).
+    pub fn unobserve(&self, id: u32) {
+        if let Some(cancel) = observables().lock().unwrap().remove(&id) {
+            let _ = cancel.send(());
+        }
+    }
+
+    /// Snapshot of a blob status, as a plain JS object
+    /// `{ state, bytesDone, size }` (cf. `BlobStatus` in `protocol.ts`).
+    pub async fn status(&self, hash: String) -> Result<JsValue, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let status = self.node.blobs.status(hash).await.map_err(to_js_err)?;
-        Ok(match status {
-            iroh_blobs::api::blobs::BlobStatus::NotFound => "not_found".to_string(),
-            iroh_blobs::api::blobs::BlobStatus::Partial { size } => {
-                format!("partial:{}", size.unwrap_or(0))
-            }
-            iroh_blobs::api::blobs::BlobStatus::Complete { size } => format!("complete:{size}"),
-        })
+        let status = match status {
+            iroh_blobs::api::blobs::BlobStatus::NotFound => BlobStatus {
+                state: "not_found",
+                bytes_done: 0,
+                size: None,
+            },
+            iroh_blobs::api::blobs::BlobStatus::Partial { size } => BlobStatus {
+                state: "partial",
+                bytes_done: size.unwrap_or(0),
+                size: None,
+            },
+            iroh_blobs::api::blobs::BlobStatus::Complete { size } => BlobStatus {
+                state: "complete",
+                bytes_done: size,
+                size: Some(size),
+            },
+        };
+        Ok(status.to_js())
     }
 
     /// Bytes of the downloaded blob (text spike only).
@@ -330,16 +417,6 @@ impl BlobsNode {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let bytes = self.node.get_bytes(hash).await.map_err(to_js_err)?;
         Ok(bytes_to_uint8array(&bytes))
-    }
-
-    /// Size of the complete blob (0 if absent).
-    pub async fn blob_size(&self, hash: String) -> Result<f64, JsError> {
-        let hash: Hash = hash.parse().map_err(to_js_err)?;
-        let status = self.node.blobs.status(hash).await.map_err(to_js_err)?;
-        Ok(match status {
-            iroh_blobs::api::blobs::BlobStatus::Complete { size } => size as f64,
-            _ => 0.0,
-        })
     }
 
     /// OPFS handle (`FileSystemFileHandle`) of the downloaded blob, for

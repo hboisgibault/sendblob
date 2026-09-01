@@ -1,6 +1,7 @@
 import "./style.css";
 import { WorkerRpc } from "./protocol";
 import { receiveFile, sendFile, type ReceivedFile } from "./transfer";
+import { clearTicketFromUrl, encodeLink, parseTicketFromUrl } from "./ticket";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -37,6 +38,10 @@ app.innerHTML = `
         <div id="send-bar" class="h-full w-0 bg-emerald-500 transition-all"></div>
       </div>
       <div id="ticket-out" class="mt-3 hidden break-all rounded-lg bg-slate-950 p-3 font-mono text-xs text-emerald-300"></div>
+      <button id="btn-copy-link" hidden
+        class="mt-2 w-full rounded-lg bg-sky-600 px-4 py-2 font-medium text-white transition hover:bg-sky-500">
+        Copy link
+      </button>
     </section>
 
     <section class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -115,7 +120,8 @@ const setBar = (sel: string, done: number, total: number) => {
 
 const btnStart = document.querySelector<HTMLButtonElement>("#btn-start")!;
 let started = false;
-btnStart.addEventListener("click", async () => {
+
+const startNode = async (): Promise<void> => {
   setStatus("starting node…");
   try {
     await rpc.call({ kind: "spawn" });
@@ -127,7 +133,9 @@ btnStart.addEventListener("click", async () => {
   } catch (err) {
     setStatus(`error: ${err}`);
   }
-});
+};
+
+btnStart.addEventListener("click", () => startNode());
 
 // ==== file sending ==========================================================
 
@@ -165,6 +173,7 @@ $(" #btn-send").addEventListener("click", async () => {
   try {
     setStatus(`sending ${file.name}…`);
     $(" #ticket-out").classList.add("hidden");
+    $(" #btn-copy-link").hidden = true;
     const ticket = await sendFile(rpc, file, (p) => {
       setBar(" #send-bar", p.bytesDone, p.bytesTotal);
       setStatus(`send: ${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}`);
@@ -172,10 +181,24 @@ $(" #btn-send").addEventListener("click", async () => {
     const out = $(" #ticket-out");
     out.textContent = ticket;
     out.classList.remove("hidden");
-    setStatus(`ticket ready — paste it into the other tab ✔ (${file.name})`);
+    ($(" #btn-copy-link") as HTMLButtonElement).dataset.ticket = ticket;
+    $(" #btn-copy-link").hidden = false;
+    setStatus(`ticket ready — share the link or paste the ticket ✔ (${file.name})`);
   } catch (err) {
     setStatus(`send error: ${err}`);
     $(" #send-bar").style.width = "0%";
+  }
+});
+
+$(" #btn-copy-link").addEventListener("click", async (ev) => {
+  const ticket = (ev.currentTarget as HTMLButtonElement).dataset.ticket;
+  if (!ticket) return;
+  try {
+    const short = await rpc.call<string>({ kind: "short_ticket", ticket });
+    await navigator.clipboard.writeText(encodeLink(short));
+    setStatus("link copied ✔ — it contains no server-side state");
+  } catch (err) {
+    setStatus(`error: ${err}`);
   }
 });
 
@@ -274,3 +297,18 @@ document.querySelectorAll<HTMLButtonElement>(".bench-btn").forEach((btn) => {
     }
   });
 });
+
+// ==== share link =============================================================
+
+// A share link (#t=… or #ticket=…) in the address bar: boot the node and
+// receive immediately. The fragment is consumed (never leaves the browser).
+const pendingTicket = parseTicketFromUrl(new URL(location.href));
+if (pendingTicket) {
+  clearTicketFromUrl();
+  input("#ticket-in").value = pendingTicket;
+  void startNode().then(() => {
+    if (started && input("#ticket-in").value.trim()) {
+      $(" #btn-receive").click();
+    }
+  });
+}
