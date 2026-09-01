@@ -3,10 +3,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Phase 3: share link (#t=<compact ticket>)
+// Phase 3: share link (#t=<compact ticket>[&n=<file name>])
 // 1. tab A sends a file (auto-import) and copies the link
 // 2. the link is short (#t=…, 88-char compact payload, no server state)
-// 3. tab B opens the link: node auto-starts, file auto-receives
+//    and carries the original file name (&n=…)
+// 3. tab B opens the link: node auto-starts, file auto-receives with
+//    the original name
 // 4. the fragment is consumed from the address bar
 
 const tmp = mkdtempSync(join(tmpdir(), "sendblob-link-"));
@@ -42,16 +44,17 @@ await a.getByText("link copied").waitFor();
 const link = await a.evaluate(() => navigator.clipboard.readText());
 console.log(`[A] link: ${link}`);
 
-// 2. shape: origin + #t= + 88 base64url chars (no blob ticket, no server path)
-const m = link.match(/^http:\/\/[^#]+#t=([A-Za-z0-9_-]{88})$/);
+// 2. shape: origin + #t= + 88 base64url chars + &n=<original file name>
+const m = link.match(/^http:\/\/[^#]+#t=([A-Za-z0-9_-]{88})&n=([^&]+)$/);
 if (!m) throw new Error(`unexpected link shape: ${link}`);
-if (link.length > 140) throw new Error(`link too long: ${link.length} chars`);
+if (m[2] !== "link-doc.bin") throw new Error(`unexpected file name: ${m[2]}`);
+if (link.length > 200) throw new Error(`link too long: ${link.length} chars`);
 
-// 3. B opens the link: auto start + receive
+// 3. B opens the link: auto start + receive, keeping the original name
 const b = await context.newPage();
 b.on("pageerror", (err) => console.log(`[B] pageerror:`, err.message));
 await b.goto(link);
-await b.getByText(/file (saved|received)/).waitFor();
+await b.getByText("file saved: link-doc.bin").waitFor();
 const status = await b.evaluate(() => document.getElementById("global-status").textContent);
 console.log(`[B] ${status}`);
 

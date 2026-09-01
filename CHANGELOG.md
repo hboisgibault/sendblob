@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Share links carry the original file name (`#t=…&n=…`, out-of-band in the
+  URL fragment): receivers save the download under the sender's name
+  (sanitized, max 120 chars) instead of `sendblob-<hash>.bin`. Pasted or
+  legacy links without `n` keep the hash-based fallback.
+
 ### Fixed
 
 - Store: a rejected quota check no longer leaves an empty entry and orphan

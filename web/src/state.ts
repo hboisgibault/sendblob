@@ -9,7 +9,7 @@
 import { batch, createSignal } from "solid-js";
 import { WorkerRpc, type StorageEstimate } from "./protocol";
 import { receiveFile, sendFile } from "./transfer";
-import { encodeLink, parseTicketFromUrl } from "./ticket";
+import { encodeLink, parseTicketFromUrl, type ShareLink } from "./ticket";
 
 export const rpc = new WorkerRpc();
 
@@ -40,11 +40,9 @@ const [ticket, setTicket] = createSignal<string | null>(null);
 const [link, setLink] = createSignal("");
 const [copied, setCopied] = createSignal(false);
 
-const pendingUrlTicket = parseTicketFromUrl(new URL(location.href));
-const [incoming, setIncoming] = createSignal<{ ticket: string } | null>(
-  pendingUrlTicket ? { ticket: pendingUrlTicket } : null,
-);
-if (pendingUrlTicket) history.replaceState(null, "", location.pathname + location.search);
+const pendingUrlShare = parseTicketFromUrl(new URL(location.href));
+const [incoming, setIncoming] = createSignal<ShareLink | null>(pendingUrlShare);
+if (pendingUrlShare) history.replaceState(null, "", location.pathname + location.search);
 
 const [recvProgress, setRecvProgress] = createSignal({ done: 0, total: 0 });
 const [recvError, setRecvError] = createSignal("");
@@ -102,7 +100,7 @@ export async function startNode(): Promise<void> {
     setNodeStatus("ready");
     setStatus("node ready");
     const pending = incoming();
-    if (pending) void doReceive(pending.ticket);
+    if (pending) void doReceive(pending.ticket, pending.name);
   } catch (err) {
     setNodeStatus("error");
     setNodeError(String(err));
@@ -134,7 +132,7 @@ export async function sendSelected(file: File): Promise<void> {
     const short = await rpc.call<string>({ kind: "short_ticket", ticket: t });
     batch(() => {
       setTicket(t);
-      setLink(encodeLink(short));
+      setLink(encodeLink(short, file.name));
       setSendState("ready");
     });
     setStatus("ticket ready");
@@ -188,10 +186,10 @@ export async function copyLink(): Promise<void> {
 
 // ==== receiving ==============================================================
 
-export async function doReceive(ticket: string): Promise<void> {
+export async function doReceive(ticket: string, name?: string | null): Promise<void> {
   if (!ticket.trim()) return;
   batch(() => {
-    setIncoming({ ticket });
+    setIncoming({ ticket, name: name ?? null });
     setRecvProgress({ done: 0, total: 0 });
     setRecvError("");
     setRecvSaved(null);
@@ -203,10 +201,10 @@ export async function doReceive(ticket: string): Promise<void> {
       setRecvProgress({ done: p.bytesDone, total: p.bytesTotal });
       bwRecv.update(p.bytesDone);
     });
-    const name = `sendblob-${f.hash.slice(0, 8)}.bin`;
-    await f.save(name);
-    setRecvSaved(name);
-    setStatus(`file saved: ${name}`);
+    const finalName = name || `sendblob-${f.hash.slice(0, 8)}.bin`;
+    await f.save(finalName);
+    setRecvSaved(finalName);
+    setStatus(`file saved: ${finalName}`);
   } catch (err) {
     setRecvError(String(err));
     setStatus(`receive error: ${err}`);
