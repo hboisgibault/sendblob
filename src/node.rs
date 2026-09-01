@@ -1,8 +1,8 @@
-//! Logique cœur partagée entre le build WASM (navigateur) et le CLI natif.
+//! Core logic shared between the WASM build (browser) and the native CLI.
 //!
-//! `BlobsNode` monte un endpoint iroh (presets N0 : relays publics + DNS/pkarr),
-//! un store iroh-blobs et le routeur du protocole blobs. Modèle inspiré de
-//! l'exemple n0-computer/iroh-examples/browser-blobs.
+//! [`BlobsNode`] sets up an iroh endpoint (N0 presets: public relays +
+//! DNS/pkarr), an iroh-blobs store and the blobs protocol router. Modeled
+//! after the n0-computer/iroh-examples/browser-blobs example.
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -13,64 +13,87 @@ use iroh_blobs::{
     BlobFormat, BlobsProtocol, Hash,
 };
 
-/// Identifiant ALPN applicatif sendblob (réservé, non utilisé dans le spike :
-/// l'interop browser↔CLI passe par l'ALPN standard iroh-blobs).
+/// Application-level ALPN identifier for sendblob (reserved, unused in the
+/// spike: browser↔CLI interop goes through the standard iroh-blobs ALPN).
 pub const ALPN: &[u8] = b"sendblob/blobs/0";
 
-/// Taille maximale visée en V1 (2 GiB) avec le futur store OPFS.
+/// Target maximum file size for V1 (2 GiB) with the future OPFS store.
 pub const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
-/// Taille des chunks utilisés pour streamer un fichier vers le store (4 MiB).
+/// Size of the chunks used to stream a file into the store (4 MiB).
 pub const CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 
-/// États haut niveau d'un noeud sendblob, exposés à l'UI.
+/// High-level states of a sendblob node, exposed to the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeStatus {
+    /// The node is not started.
     Idle,
+    /// The iroh endpoint is binding.
     Connecting,
+    /// The node is online and ready to transfer.
     Ready,
+    /// A transfer is in progress.
     Transferring,
+    /// The node is shut down.
     Closed,
 }
 
-/// Noeud sendblob : endpoint iroh + store de blobs + routeur protocole.
+/// A sendblob node: iroh endpoint + blob store + protocol router.
 #[derive(Debug, Clone)]
 pub struct BlobsNode {
     address_lookup: MemoryLookup,
     router: Router,
+    /// Client of the blobs API, to talk to the store directly.
     pub blobs: Store,
     downloader: Downloader,
 }
 
 impl BlobsNode {
+    /// Spawns a node with the platform's default store
+    /// (memory natively, OPFS in the browser).
     pub async fn spawn() -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let store = iroh_blobs::store::mem::MemStore::default();
+            Self::spawn_with_store(store.as_ref().clone()).await
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let store = crate::store::LocalStore::new_with_opts(Default::default());
+            Self::spawn_with_store(store.into()).await
+        }
+    }
+
+    /// Mounts the node on an existing store (OPFS on the browser side).
+    pub async fn spawn_with_store(store: iroh_blobs::api::Store) -> Result<Self> {
         let address_lookup = MemoryLookup::default();
         let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::N0)
             .address_lookup(address_lookup.clone())
             .bind()
             .await?;
-        let store = iroh_blobs::store::mem::MemStore::default();
         let downloader = Downloader::new(&store, &endpoint);
         let router = Router::builder(endpoint)
             .accept(iroh_blobs::ALPN, BlobsProtocol::new(&store, None))
             .spawn();
         Ok(Self {
-            blobs: store.as_ref().clone(),
+            blobs: store,
             router,
             downloader,
             address_lookup,
         })
     }
 
+    /// Identifier of the local endpoint.
     pub fn endpoint_id(&self) -> EndpointId {
         self.router.endpoint().id()
     }
 
+    /// The underlying iroh endpoint.
     pub fn endpoint(&self) -> &Endpoint {
         self.router.endpoint()
     }
 
-    /// Publie des octets dans le store et retourne le ticket de transfert.
+    /// Imports bytes into the store and returns a transfer ticket.
     pub async fn import(&self, data: Bytes) -> Result<BlobTicket> {
         let tag = self
             .blobs
@@ -81,7 +104,7 @@ impl BlobsNode {
         self.ticket(tag.hash, tag.format).await
     }
 
-    /// Télécharge le contenu d'un ticket et attend la complétion.
+    /// Downloads the content of a ticket and waits for completion.
     pub async fn download(&self, ticket: BlobTicket) -> Result<Hash> {
         self.address_lookup.add_endpoint_info(ticket.addr().clone());
         self.downloader
@@ -90,12 +113,12 @@ impl BlobsNode {
         Ok(ticket.hash())
     }
 
-    /// Statut d'un blob dans le store local.
+    /// Status of a blob in the local store.
     pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
         Ok(self.blobs.status(hash).await?)
     }
 
-    /// Taille du blob une fois complet.
+    /// Size of the blob once complete.
     pub async fn complete_size(&self, hash: Hash) -> Result<u64> {
         match self.status(hash).await? {
             BlobStatus::NotFound => Err(anyhow!("blob not found")),
@@ -104,11 +127,13 @@ impl BlobsNode {
         }
     }
 
-    /// Octets du blob (spike : textes uniquement).
+    /// Bytes of the blob (spike: text only).
     pub async fn get_bytes(&self, hash: Hash) -> Result<Bytes> {
         Ok(self.blobs.get_bytes(hash).await?)
     }
 
+    /// Builds a transfer ticket for the blob `hash`, waiting for the
+    /// endpoint to come online first.
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
         self.endpoint().online().await;
         let addr = self.endpoint().addr();
@@ -118,9 +143,9 @@ impl BlobsNode {
 
 #[cfg(test)]
 mod tests {
-    /// Garde-fou du micro-patch iroh-blobs : `api::Store::local` doit rester
-    /// public et accepter un canal local standard (contrat du fork
-    /// `sendblob/local-store-ctor`).
+    /// Guard rail for the iroh-blobs micro-patch: `api::Store::local` must
+    /// stay public and accept a standard local channel (contract of the
+    /// `sendblob/local-store-ctor` fork branch).
     #[test]
     fn local_store_constructor_is_public() {
         use iroh_blobs::api::Store;

@@ -17,14 +17,19 @@ required-features = ["cli"]
 
 [dependencies]
 anyhow = "1.0.86"
+bao-tree = { version = "0.16", default-features = false, features = ["experimental-mixed", "tokio_fsm", "validate"] }
 bytes = "1.10.1"
 clap = { version = "4.5", features = ["derive"], optional = true }
 console_error_panic_hook = "0.1.7"
 getrandom = { version = "0.3", features = ["wasm_js"] }
-# Versions épinglées sur le set connu-good de l'exemple n0-computer/iroh-examples/browser-blobs
+# Versions pinned to the known-good set of the n0-computer/iroh-examples/browser-blobs example
 iroh = { version = "1.0.0", default-features = false, features = ["tls-ring"] }
 iroh-blobs = { version = "0.103", default-features = false }
+iroh-io = "0.6"
+irpc = { version = "0.17", default-features = false, features = ["spans", "stream", "derive", "varint-util"] }
+range-collections = "0.4"
 js-sys = "0.3.77"
+n0-future = "0.3"
 tokio = { version = "1.44", default-features = false, features = ["sync"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
@@ -32,13 +37,32 @@ tracing-subscriber-wasm = "0.1.0"
 wasm-bindgen = "=0.2.122"
 wasm-bindgen-futures = "0.4"
 
+# OPFS backend (browser only). Version pinned to the exact pairing
+# with wasm-bindgen =0.2.122 already present in the tree.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3.99", features = [
+  "FileSystemDirectoryHandle",
+  "FileSystemFileHandle",
+  "FileSystemGetDirectoryOptions",
+  "FileSystemGetFileOptions",
+  "FileSystemReadWriteOptions",
+  "FileSystemSyncAccessHandle",
+  "StorageEstimate",
+  "StorageManager",
+  "WorkerGlobalScope",
+  "WorkerNavigator",
+] }
+
 [features]
 default = []
 cli = ["dep:clap", "tokio/full"]
 
-# Micro-patch : expose `api::Store::local` (constructeur public) pour brancher
-# le store OPFS custom. Branche `sendblob/local-store-ctor` du fork
-# hboisgibault/iroh-blobs (diff : +22/-2 sur src/api.rs, à rebaser par release
-# d'amont). PR upstream à ouvrir quand n0 sera prêt à en discuter.
+[dev-dependencies]
+tokio = { version = "1.44", features = ["rt", "rt-multi-thread", "macros"] }
+
+# Micro-patch: exposes `api::Store::local` (public constructor) to plug in
+# the custom OPFS store. Branch `sendblob/local-store-ctor` of the
+# hboisgibault/iroh-blobs fork (diff: +22/-2 on src/api.rs, to rebase on each
+# upstream release). Upstream PR to open once n0 is ready to discuss it.
 [patch.crates-io]
 iroh-blobs = { git = "https://github.com/hboisgibault/iroh-blobs", branch = "sendblob/local-store-ctor" }

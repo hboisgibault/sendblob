@@ -11,6 +11,27 @@ interface BenchResult {
   readMs: number;
 }
 
+/** Purge du répertoire OPFS `sendblob` : le nœud est éphémère par design.
+ *
+ * Les fichiers encore verrouillés par un autre onglet (handles ouverts)
+ * sont ignorés : ils partiront à la prochaine purge sans verrou.
+ */
+async function purgeOpfs(): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  const dir = await root.getDirectoryHandle("sendblob", { create: true });
+  // keys() est un itérateur async, absent des types lib.dom selon les versions.
+  const keys = (dir as unknown as { keys(): AsyncIterable<string> }).keys();
+  const names: string[] = [];
+  for await (const name of keys) names.push(name);
+  await Promise.allSettled(
+    names.map((name) =>
+      dir.removeEntry(name).catch(() => {
+        /* fichier verrouillé par un autre onglet : tant pis */
+      }),
+    ),
+  );
+}
+
 /** S2 : bench throughput OPFS SyncAccessHandle (écriture + lecture séquentielles). */
 async function benchOpfs(sizeMb: number, chunkMb: number): Promise<BenchResult> {
   const root = await navigator.storage.getDirectory();
@@ -59,6 +80,7 @@ async function handle(msg: ToWorker): Promise<unknown> {
   switch (msg.kind) {
     case "spawn": {
       await init();
+      await purgeOpfs();
       node = await BlobsNode.spawn();
       return null;
     }
@@ -66,12 +88,24 @@ async function handle(msg: ToWorker): Promise<unknown> {
       return node!.endpoint_id();
     case "import":
       return node!.import(msg.data);
+    case "import_begin":
+      return node!.import_begin(msg.name, msg.size);
+    case "import_chunk":
+      return node!.import_chunk(msg.importId, msg.data);
+    case "import_finish":
+      return node!.import_finish(msg.importId);
+    case "import_abort":
+      return node!.import_abort(msg.importId);
+    case "import_progress":
+      return node!.import_progress(msg.importId);
     case "download":
       return node!.download(msg.ticket);
     case "hash_from_ticket":
       return node!.hash_from_ticket(msg.ticket);
     case "status":
       return node!.status(msg.hash);
+    case "save":
+      return node!.save_file(msg.hash);
     case "get":
       return node!.get(msg.hash);
     case "bench_opfs":

@@ -4,9 +4,15 @@ export type ToWorker =
   | { kind: "spawn" }
   | { kind: "endpoint_id" }
   | { kind: "import"; data: Uint8Array }
+  | { kind: "import_begin"; name: string; size: number }
+  | { kind: "import_chunk"; importId: number; data: Uint8Array }
+  | { kind: "import_finish"; importId: number }
+  | { kind: "import_abort"; importId: number }
+  | { kind: "import_progress"; importId: number }
   | { kind: "download"; ticket: string }
   | { kind: "hash_from_ticket"; ticket: string }
   | { kind: "status"; hash: string }
+  | { kind: "save"; hash: string }
   | { kind: "get"; hash: string }
   | { kind: "bench_opfs"; sizeMb: number; chunkMb: number };
 
@@ -38,11 +44,12 @@ export class WorkerRpc {
     };
   }
 
-  call<T>(msg: ToWorker): Promise<T> {
+  /** Appel RPC ; `transfer` liste les buffers à transférer sans copie. */
+  call<T>(msg: ToWorker, transfer?: Transferable[]): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.worker.postMessage({ ...msg, id } satisfies WorkerMsg);
+      this.worker.postMessage({ ...msg, id } satisfies WorkerMsg, transfer ?? []);
     });
   }
 }

@@ -3246,19 +3246,25 @@ name = "sendblob"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bao-tree",
  "bytes",
  "clap",
  "console_error_panic_hook",
  "getrandom 0.3.4",
  "iroh",
  "iroh-blobs",
+ "iroh-io",
+ "irpc",
  "js-sys",
+ "n0-future",
+ "range-collections",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "tracing-subscriber-wasm",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
