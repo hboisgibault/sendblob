@@ -4,6 +4,93 @@ import type { ToWorker } from "./protocol";
 
 let node: BlobsNode | null = null;
 
+/** Root subdirectory of sendblob data in OPFS. */
+const ROOT_DIR = "sendblob";
+
+/** OPFS directory id of this tab (one node per tab: OPFS handles are
+ * exclusive, two tabs sharing one directory would block each other). */
+let tabId = "";
+
+/** Minimal typing: `navigator.locks` is missing from some lib versions. */
+interface LockManagerLike {
+  request<R>(
+    name: string,
+    opts: { ifAvailable: true },
+    callback: (lock: unknown | null) => Promise<R>,
+  ): Promise<R>;
+}
+
+const webLocks = (): LockManagerLike | undefined =>
+  (navigator as unknown as { locks?: LockManagerLike }).locks;
+
+/** Liveness lock: held as long as the worker lives, released by the browser
+ * when the tab closes or crashes. It is the signal used by the purge to
+ * tell live directories apart from orphans. */
+function holdLivenessLock(id: string): void {
+  webLocks()
+    ?.request(`${ROOT_DIR}:alive:${id}`, { ifAvailable: true }, () => new Promise(() => {}))
+    .catch(() => {
+      /* lock lost (browser shutdown): nothing to do */
+    });
+}
+
+/** Handle of the sendblob root directory in OPFS. */
+async function rootDir(): Promise<FileSystemDirectoryHandle> {
+  const root = await navigator.storage.getDirectory();
+  return root.getDirectoryHandle(ROOT_DIR, { create: true });
+}
+
+/** Purge of the `sendblob` OPFS directory: the node is ephemeral by design.
+ *
+ * Removes free files at the root (legacy flat layout) and directories whose
+ * owner tab is dead (liveness lock released). Directories of live tabs are
+ * kept. Without Web Locks (older browsers), only free files go away.
+ */
+async function purgeOpfs(): Promise<void> {
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await rootDir();
+  } catch {
+    return; // no directory yet: nothing to purge
+  }
+  const locks = webLocks();
+  const names: string[] = [];
+  // keys() is an async iterator, missing from lib.dom types in some versions.
+  const keys = (dir as unknown as { keys(): AsyncIterable<string> }).keys();
+  for await (const name of keys) names.push(name);
+  await Promise.all(
+    names.map(async (name) => {
+      // legacy file (flat layout from before the per-tab directories)
+      if (await isFile(dir, name)) {
+        await dir.removeEntry(name).catch(() => {
+          /* locked by a tab of a previous version: skipped */
+        });
+        return;
+      }
+      // directory: purged only if the owning tab is dead
+      if (!locks) return;
+      await locks
+        .request(`${ROOT_DIR}:alive:${name}`, { ifAvailable: true }, async (lock) => {
+          if (lock === null) return; // held: tab is alive
+          await dir.removeEntry(name, { recursive: true }).catch(() => {});
+        })
+        .catch(() => {
+          /* raced with the tab closing: next purge */
+        });
+    }),
+  );
+}
+
+/** True if `name` designates a file (not a subdirectory). */
+async function isFile(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface BenchResult {
   writeMbs: number;
   readMbs: number;
@@ -11,28 +98,7 @@ interface BenchResult {
   readMs: number;
 }
 
-/** Purge du répertoire OPFS `sendblob` : le nœud est éphémère par design.
- *
- * Les fichiers encore verrouillés par un autre onglet (handles ouverts)
- * sont ignorés : ils partiront à la prochaine purge sans verrou.
- */
-async function purgeOpfs(): Promise<void> {
-  const root = await navigator.storage.getDirectory();
-  const dir = await root.getDirectoryHandle("sendblob", { create: true });
-  // keys() est un itérateur async, absent des types lib.dom selon les versions.
-  const keys = (dir as unknown as { keys(): AsyncIterable<string> }).keys();
-  const names: string[] = [];
-  for await (const name of keys) names.push(name);
-  await Promise.allSettled(
-    names.map((name) =>
-      dir.removeEntry(name).catch(() => {
-        /* fichier verrouillé par un autre onglet : tant pis */
-      }),
-    ),
-  );
-}
-
-/** S2 : bench throughput OPFS SyncAccessHandle (écriture + lecture séquentielles). */
+/** S2: bench OPFS SyncAccessHandle throughput (sequential write + read). */
 async function benchOpfs(sizeMb: number, chunkMb: number): Promise<BenchResult> {
   const root = await navigator.storage.getDirectory();
   const name = `sendblob-bench-${Date.now()}`;
@@ -80,8 +146,10 @@ async function handle(msg: ToWorker): Promise<unknown> {
   switch (msg.kind) {
     case "spawn": {
       await init();
+      tabId = crypto.randomUUID();
+      holdLivenessLock(tabId);
       await purgeOpfs();
-      node = await BlobsNode.spawn();
+      node = await BlobsNode.spawn(tabId);
       return null;
     }
     case "endpoint_id":

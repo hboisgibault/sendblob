@@ -263,13 +263,15 @@ mod wasm {
         }
     }
 
-    /// OPFS directory (`navigator.storage.getDirectory()/sendblob`).
+    /// OPFS directory (`navigator.storage.getDirectory()/sendblob/<subdir>`).
     #[derive(Clone)]
     pub struct OpfsDir(FileSystemDirectoryHandle);
 
     impl OpfsDir {
-        /// Opens (or creates) the `sendblob` subdirectory of the OPFS root.
-        pub async fn open() -> io::Result<Self> {
+        /// Opens (or creates) the `sendblob/<subdir>` directory of the OPFS
+        /// root. One subdirectory per browser tab: OPFS sync access handles
+        /// are exclusive, so tabs sharing a directory would conflict.
+        pub async fn open(subdir: &str) -> io::Result<Self> {
             let root: FileSystemDirectoryHandle = JsFuture::from(
                 js_sys::global()
                     .unchecked_into::<web_sys::WorkerGlobalScope>()
@@ -284,6 +286,11 @@ mod wasm {
             opts.set_create(true);
             let dir: FileSystemDirectoryHandle =
                 JsFuture::from(root.get_directory_handle_with_options("sendblob", &opts))
+                    .await
+                    .map_err(io_err)?
+                    .unchecked_into();
+            let dir: FileSystemDirectoryHandle =
+                JsFuture::from(dir.get_directory_handle_with_options(subdir, &opts))
                     .await
                     .map_err(io_err)?
                     .unchecked_into();

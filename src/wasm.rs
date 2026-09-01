@@ -1,11 +1,11 @@
-//! Bindings WASM exposés au frontend TypeScript.
+//! WASM bindings exposed to the TypeScript frontend.
 //!
-//! Phase 2 : fichiers de grande taille via le store OPFS.
-//! - upload : `import_begin` / `import_chunk` / `import_finish` (chunks de
-//!   `File.slice` streamés vers l'OPFS, outboard calculé incrémentalement) ;
-//! - download : `download` (écritures sparses validées) puis `save_file`
-//!   (handle OPFS → `File` JS, zéro copie heap) ;
-//! - texte : `import` / `get` conservés du spike phase 1.
+//! Phase 2: large files through the OPFS store.
+//! - upload: `import_begin` / `import_chunk` / `import_finish` (`File.slice`
+//!   chunks streamed into OPFS, outboard computed incrementally);
+//! - download: `download` (sparse validated writes) then `save_file`
+//!   (OPFS handle → JS `File`, zero heap copy);
+//! - text: `import` / `get` kept from the phase 1 spike.
 
 use std::{
     collections::HashMap,
@@ -40,17 +40,17 @@ fn start() {
         .init();
 }
 
-/// Version du crate, pratique pour vérifier l'appariement WASM/UI.
+/// Crate version, handy to check the WASM/UI pairing.
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-// ==== imports streamés en cours =============================================
+// ==== in-progress streamed imports ==========================================
 
 struct PendingImport {
     tx: mpsc::Sender<iroh_blobs::api::proto::ImportByteStreamUpdate>,
-    /// Octets déjà reçus (pour la progression).
+    /// Bytes received so far (for progress).
     copied: Arc<Mutex<u64>>,
     result: tokio::sync::oneshot::Receiver<Result<Hash, String>>,
     #[allow(dead_code)]
@@ -67,7 +67,7 @@ fn pending_imports() -> &'static Mutex<HashMap<u32, PendingImport>> {
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Flux de chunks JS → `Stream` pour `add_stream`.
+/// JS chunk flow → `Stream` for `add_stream`.
 struct ChunkStream(mpsc::Receiver<iroh_blobs::api::proto::ImportByteStreamUpdate>);
 
 impl n0_future::Stream for ChunkStream {
@@ -91,8 +91,8 @@ impl n0_future::Stream for ChunkStream {
     }
 }
 
-/// Vérification de quota : refus si `size` ne tient pas dans le quota OPFS
-/// restant (marge 10 % + 64 MiB pour l'outboard et les temporaires).
+/// Quota check: reject if `size` does not fit in the remaining OPFS quota
+/// (10% margin + 64 MiB for the outboard and temporaries).
 fn storage_check_closure() -> StorageCheck {
     Arc::new(move |size: u64| Box::pin(async move { check_storage(size).await }))
 }
@@ -100,7 +100,7 @@ fn storage_check_closure() -> StorageCheck {
 async fn check_storage(size: u64) -> Result<(), String> {
     let (usage, quota) = opfs_estimate().await?;
     let Some(quota) = quota else {
-        // quota inconnu : on ne peut pas trancher, on laisse passer
+        // unknown quota: cannot decide, let it through
         return Ok(());
     };
     let margin = size / 10 + 64 * 1024 * 1024;
@@ -108,7 +108,7 @@ async fn check_storage(size: u64) -> Result<(), String> {
     let available = quota.saturating_sub(usage.unwrap_or(0));
     if needed > available {
         return Err(format!(
-            "espace insuffisant : {:.1} Gio nécessaires, {:.1} Gio disponibles dans le stockage du site",
+            "insufficient space: {:.1} GiB needed, {:.1} GiB available in site storage",
             needed as f64 / 1024.0 / 1024.0 / 1024.0,
             available as f64 / 1024.0 / 1024.0 / 1024.0,
         ));
@@ -116,7 +116,7 @@ async fn check_storage(size: u64) -> Result<(), String> {
     Ok(())
 }
 
-/// `(usage, quota)` du stockage OPFS du site, en octets.
+/// `(usage, quota)` of the site's OPFS storage, in bytes.
 async fn opfs_estimate() -> Result<(Option<u64>, Option<u64>), String> {
     let estimate = JsFuture::from(
         js_sys::global()
@@ -135,7 +135,7 @@ async fn opfs_estimate() -> Result<(Option<u64>, Option<u64>), String> {
     ))
 }
 
-/// Noeud sendblob côté navigateur.
+/// Sendblob node in the browser.
 #[wasm_bindgen]
 pub struct BlobsNode {
     node: crate::node::BlobsNode,
@@ -144,10 +144,12 @@ pub struct BlobsNode {
 
 #[wasm_bindgen]
 impl BlobsNode {
-    pub async fn spawn() -> Result<BlobsNode, JsError> {
-        // La purge du répertoire OPFS est faite côté TS avant l'appel ; ici
-        // on ouvre le répertoire et on branche le store custom.
-        let dir = OpfsDir::open()
+    /// Spawns a node backed by the OPFS store, in the `sendblob/<subdir>`
+    /// directory (one subdirectory per browser tab).
+    pub async fn spawn(subdir: String) -> Result<BlobsNode, JsError> {
+        // The OPFS directory purge is done on the TS side before the call; here
+        // we open the directory and wire the custom store.
+        let dir = OpfsDir::open(&subdir)
             .await
             .map_err(|e| JsError::new(&e.to_string()))?;
         let store = LocalStore::new_with_opts(Options {
@@ -160,11 +162,12 @@ impl BlobsNode {
         Ok(Self { node, local: store })
     }
 
+    /// Identifier of the local endpoint.
     pub fn endpoint_id(&self) -> String {
         self.node.endpoint_id().to_string()
     }
 
-    /// Publie des octets, retourne le ticket (textes et petits blobs).
+    /// Imports bytes, returns the ticket (texts and small blobs).
     pub async fn import(&self, data: Uint8Array) -> Result<String, JsError> {
         let data = uint8array_to_bytes(&data);
         tracing::info!("importing data of len {}", data.len());
@@ -185,11 +188,11 @@ impl BlobsNode {
         Ok(ticket.to_string())
     }
 
-    /// Démarre un import streamé, retourne l'identifiant à passer à
+    /// Starts a streamed import, returns the id to pass to
     /// `import_chunk` / `import_finish` / `import_progress`.
     pub async fn import_begin(&self, name: String, size: f64) -> Result<u32, JsError> {
-        // Pré-vérification du quota avant de pousser le moindre octet (le
-        // store ne vérifie que le chemin réseau import_bao, pas add_stream).
+        // Pre-check the quota before pushing a single byte (the store only
+        // checks the network path import_bao, not add_stream).
         let size = size as u64;
         check_storage(size).await.map_err(|e| JsError::new(&e))?;
         let (tx, rx) = mpsc::channel(8);
@@ -197,14 +200,14 @@ impl BlobsNode {
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         let id = next_import_id();
 
-        // Tâche de consommation : add_stream écrit les chunks dans l'OPFS
-        // au fil de l'eau et termine par Done(hash).
+        // Consumer task: add_stream writes the chunks into OPFS as they
+        // arrive and ends with Done(hash).
         let store: iroh_blobs::api::Store = self.local.clone().into();
         let copied_task = copied.clone();
         n0_future::task::spawn(async move {
             use n0_future::StreamExt;
             let progress = store.blobs().add_stream(ChunkStream(rx));
-            let mut result: Result<Hash, String> = Err("interrompu".to_string());
+            let mut result: Result<Hash, String> = Err("interrupted".to_string());
             let mut stream = progress.await.stream().await;
             while let Some(item) = stream.next().await {
                 match item {
@@ -237,7 +240,7 @@ impl BlobsNode {
         Ok(id)
     }
 
-    /// Pousse un chunk d'un import en cours.
+    /// Pushes a chunk of an in-progress import.
     pub async fn import_chunk(&self, id: u32, data: Uint8Array) -> Result<(), JsError> {
         let pending = pending_imports()
             .lock()
@@ -245,20 +248,20 @@ impl BlobsNode {
             .get(&id)
             .map(|p| (p.tx.clone(), p.copied.clone()));
         let Some((tx, copied)) = pending else {
-            return Err(JsError::new("import inconnu ou terminé"));
+            return Err(JsError::new("unknown or finished import"));
         };
         let bytes = uint8array_to_bytes(&data);
         *copied.lock().unwrap() += bytes.len() as u64;
         tx.send(iroh_blobs::api::proto::ImportByteStreamUpdate::Bytes(bytes))
             .await
-            .map_err(|_| JsError::new("import interrompu"))?;
+            .map_err(|_| JsError::new("import interrupted"))?;
         Ok(())
     }
 
-    /// Termine l'import : attend le hash, retourne le ticket.
+    /// Finishes the import: waits for the hash, returns the ticket.
     pub async fn import_finish(&self, id: u32) -> Result<String, JsError> {
         let Some(pending) = pending_imports().lock().unwrap().remove(&id) else {
-            return Err(JsError::new("import inconnu ou déjà terminé"));
+            return Err(JsError::new("unknown or already finished import"));
         };
         let _ = pending
             .tx
@@ -267,7 +270,7 @@ impl BlobsNode {
         let hash = pending
             .result
             .await
-            .map_err(|_| JsError::new("import interrompu"))?
+            .map_err(|_| JsError::new("import interrupted"))?
             .map_err(|e| JsError::new(&e))?;
         let ticket = self
             .node
@@ -277,16 +280,16 @@ impl BlobsNode {
         Ok(ticket.to_string())
     }
 
-    /// Abandonne un import en cours (les fichiers temporaires restent jusqu'à
-    /// la prochaine purge).
+    /// Aborts an in-progress import (temporary files stay until the next
+    /// purge).
     pub async fn import_abort(&self, id: u32) {
         if let Some(pending) = pending_imports().lock().unwrap().remove(&id) {
-            // drop du sender : le flux se termine, l'import échoue
+            // dropping the sender: the stream ends, the import fails
             drop(pending.tx);
         }
     }
 
-    /// Octets déjà copiés pour un import en cours.
+    /// Bytes copied so far for an in-progress import.
     pub fn import_progress(&self, id: u32) -> f64 {
         pending_imports()
             .lock()
@@ -296,20 +299,20 @@ impl BlobsNode {
             .unwrap_or(0.0)
     }
 
-    /// Télécharge depuis un ticket, retourne le hash à complétion.
+    /// Downloads from a ticket, returns the hash at completion.
     pub async fn download(&self, ticket: String) -> Result<String, JsError> {
         let ticket: BlobTicket = ticket.parse().map_err(to_js_err)?;
         let hash = self.node.download(ticket).await.map_err(to_js_err)?;
         Ok(hash.to_string())
     }
 
-    /// Hash extrait d'un ticket, sans lancer de téléchargement (pour la progression).
+    /// Hash extracted from a ticket, without starting a download (for progress).
     pub fn hash_from_ticket(&self, ticket: String) -> Result<String, JsError> {
         let ticket: BlobTicket = ticket.parse().map_err(to_js_err)?;
         Ok(ticket.hash().to_string())
     }
 
-    /// Statut du blob : "not_found", "partial:<octets reçus>", "complete:<taille>".
+    /// Blob status: "not_found", "partial:<bytes received>", "complete:<size>".
     pub async fn status(&self, hash: String) -> Result<String, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let status = self.node.blobs.status(hash).await.map_err(to_js_err)?;
@@ -322,14 +325,14 @@ impl BlobsNode {
         })
     }
 
-    /// Octets du blob téléchargé (spike texte uniquement).
+    /// Bytes of the downloaded blob (text spike only).
     pub async fn get(&self, hash: String) -> Result<Uint8Array, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let bytes = self.node.get_bytes(hash).await.map_err(to_js_err)?;
         Ok(bytes_to_uint8array(&bytes))
     }
 
-    /// Taille du blob complet (0 si absent).
+    /// Size of the complete blob (0 if absent).
     pub async fn blob_size(&self, hash: String) -> Result<f64, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let status = self.node.blobs.status(hash).await.map_err(to_js_err)?;
@@ -339,18 +342,18 @@ impl BlobsNode {
         })
     }
 
-    /// Handle OPFS (`FileSystemFileHandle`) du blob téléchargé, pour
-    /// sauvegarde zéro-copie côté JS (`getFile()` → Blob adossé à l'OPFS).
+    /// OPFS handle (`FileSystemFileHandle`) of the downloaded blob, for
+    /// zero-copy saving on the JS side (`getFile()` → Blob backed by OPFS).
     pub fn save_file(&self, hash: String) -> Result<JsValue, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let file = self
             .local
             .data_file(&hash)
-            .ok_or_else(|| JsError::new("blob non trouvé"))?;
+            .ok_or_else(|| JsError::new("blob not found"))?;
         Ok(file.file_handle().clone().into())
     }
 
-    /// `(usage, quota)` du stockage du site, pour l'affichage UI.
+    /// `(usage, quota)` of the site's storage, for the UI.
     pub async fn storage_estimate(&self) -> Result<JsValue, JsError> {
         let (usage, quota) = opfs_estimate().await.map_err(|e| JsError::new(&e))?;
         let obj = js_sys::Object::new();
@@ -364,17 +367,20 @@ impl BlobsNode {
     }
 }
 
+/// Converts an error into a JS error carrying its display message.
 fn to_js_err(err: impl Into<anyhow::Error>) -> JsError {
     let err: anyhow::Error = err.into();
     JsError::new(&err.to_string())
 }
 
+/// Copies a `Uint8Array` into a `Bytes`.
 pub fn uint8array_to_bytes(data: &Uint8Array) -> Bytes {
     let mut buffer = vec![0u8; data.length() as usize];
     data.copy_to(&mut buffer[..]);
     Bytes::from(buffer)
 }
 
+/// Copies bytes into a new `Uint8Array`.
 pub fn bytes_to_uint8array(bytes: &[u8]) -> Uint8Array {
     let array = Uint8Array::new_with_length(bytes.len() as u32);
     array.copy_from(bytes);
