@@ -265,9 +265,22 @@ function Incoming() {
           <p class="text-sm text-ink-soft">
             the sender must keep their tab open — then retry from the link
           </p>
-          <button class="btn-pixel" onClick={resetIncoming}>
-            Back
-          </button>
+          <div class="flex gap-2">
+            <Show when={incoming()}>
+              <button
+                class="btn-pixel btn-pixel-primary"
+                onClick={() => {
+                  const inc = incoming();
+                  if (inc) void doReceive(inc.ticket, inc.name);
+                }}
+              >
+                Retry
+              </button>
+            </Show>
+            <button class="btn-pixel" onClick={resetIncoming}>
+              Back
+            </button>
+          </div>
         </div>
       </Match>
       <Match when={true}>

@@ -47,11 +47,25 @@ export interface ReceivedFile {
   save: (filename: string) => Promise<void>;
 }
 
+export interface ReceiveOptions {
+  /** Total download attempts (first try + retries). */
+  maxAttempts?: number;
+  /** Notified before each retry (1 = first retry). */
+  onRetry?: (attempt: number, err: unknown) => void;
+}
+
+export const DEFAULT_MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1_000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export async function receiveFile(
   rpc: WorkerRpcLike,
   ticket: string,
   onProgress?: (p: TransferProgress) => void,
+  opts?: ReceiveOptions,
 ): Promise<ReceivedFile> {
+  const maxAttempts = Math.max(1, opts?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
   const hash = await rpc.call<string>({ kind: "hash_from_ticket", ticket });
 
   // progress pushed by the store (bitfield updates, cf. Rust `observe`)
@@ -68,7 +82,19 @@ export async function receiveFile(
   let observeId: number | null = null;
   try {
     observeId = await rpc.call<number>({ kind: "observe", hash });
-    await rpc.call({ kind: "download", ticket });
+    // Each attempt resumes from the store bitfield: validated chunks are
+    // kept in OPFS and only the missing ones are re-requested, so the
+    // progress events stay continuous across attempts.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await rpc.call({ kind: "download", ticket });
+        break;
+      } catch (err) {
+        if (attempt >= maxAttempts) throw err;
+        opts?.onRetry?.(attempt, err);
+        await sleep(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      }
+    }
   } finally {
     unsubscribe?.();
     // cancels the store-side subscription too (no-op once it self-terminated

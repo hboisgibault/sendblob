@@ -8,7 +8,7 @@
 
 import { batch, createSignal } from "solid-js";
 import { WorkerRpc, type StorageEstimate } from "./protocol";
-import { receiveFile, sendFile } from "./transfer";
+import { receiveFile, sendFile, DEFAULT_MAX_ATTEMPTS } from "./transfer";
 import { clearTicketFromUrl, encodeLink, parseTicketFromUrl, type ShareLink } from "./ticket";
 
 export const rpc = new WorkerRpc();
@@ -197,10 +197,20 @@ export async function doReceive(ticket: string, name?: string | null): Promise<v
   bwRecv.reset();
   setStatus("downloading…");
   try {
-    const f = await receiveFile(rpc, ticket, (p) => {
-      setRecvProgress({ done: p.bytesDone, total: p.bytesTotal });
-      bwRecv.update(p.bytesDone);
-    });
+    const f = await receiveFile(
+      rpc,
+      ticket,
+      (p) => {
+        setRecvProgress({ done: p.bytesDone, total: p.bytesTotal });
+        bwRecv.update(p.bytesDone);
+      },
+      {
+        onRetry: (attempt, err) => {
+          bwRecv.reset();
+          setStatus(`retry ${attempt}/${DEFAULT_MAX_ATTEMPTS}: ${err}`);
+        },
+      },
+    );
     const finalName = name || `sendblob-${f.hash.slice(0, 8)}.bin`;
     await f.save(finalName);
     setRecvSaved(finalName);
