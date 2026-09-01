@@ -72,6 +72,12 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Wasm build optimized for CPU speed (TLS ring, blake3, protocol): the
+# wasm-opt -Oz pass in package.json recompresses afterwards.
+[profile.wasm-release]
+inherits = "release"
+opt-level = 3
+
 [lints.rust]
 missing_docs = "deny"
 

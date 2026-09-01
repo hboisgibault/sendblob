@@ -348,6 +348,11 @@ impl BlobsNode {
     /// events forwarded by the worker. Returns a subscription id to pass to
     /// [`BlobsNode::unobserve`]; the subscription also ends by itself once
     /// the blob is complete.
+    ///
+    /// The store pushes one update per validated 16 KiB chunk — far more
+    /// than the UI needs. Callbacks are therefore throttled to at most one
+    /// per [`PROGRESS_INTERVAL`]; the first update and completion always go
+    /// through immediately.
     pub fn observe(&self, hash: String, callback: js_sys::Function) -> Result<u32, JsError> {
         let hash: Hash = hash.parse().map_err(to_js_err)?;
         let store = self.node.blobs.clone();
@@ -355,31 +360,56 @@ impl BlobsNode {
         let id = next_observe_id();
         observables().lock().unwrap().insert(id, cancel_tx);
         n0_future::task::spawn(async move {
-            use n0_future::StreamExt;
+            use n0_future::time::{Instant, sleep_until};
+            use n0_future::{StreamExt, time::Duration};
+            /// Minimum interval between progress callbacks pushed to JS.
+            const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+            let send = |bitfield: &iroh_blobs::api::proto::Bitfield| {
+                let complete = bitfield.is_complete();
+                let update = js_object(&[
+                    ("bytesDone", JsValue::from_f64(bitfield.total_bytes() as f64)),
+                    (
+                        "bytesTotal",
+                        if complete {
+                            JsValue::from_f64(bitfield.size() as f64)
+                        } else {
+                            JsValue::NULL
+                        },
+                    ),
+                    ("complete", JsValue::from_bool(complete)),
+                ]);
+                let _ = callback.call1(&JsValue::NULL, &update);
+            };
             let Ok(mut stream) = store.observe(hash).stream().await else {
                 observables().lock().unwrap().remove(&id);
                 return;
             };
             let mut cancel = std::pin::pin!(cancel_rx);
+            // Latest update held back by the throttle, flushed at `next_due`
+            // so a pause in the item flow cannot hide progress.
+            let mut pending: Option<iroh_blobs::api::proto::Bitfield> = None;
+            let mut next_due = Instant::now(); // first update goes through
             loop {
                 tokio::select! {
                     _ = &mut cancel => break,
+                    () = sleep_until(next_due), if pending.is_some() => {
+                        if let Some(bitfield) = pending.take() {
+                            send(&bitfield);
+                        }
+                    }
                     item = stream.next() => {
                         let Some(bitfield) = item else { break };
-                        let update = js_object(&[
-                            ("bytesDone", JsValue::from_f64(bitfield.total_bytes() as f64)),
-                            (
-                                "bytesTotal",
-                                match bitfield.is_complete() {
-                                    true => JsValue::from_f64(bitfield.size() as f64),
-                                    false => JsValue::NULL,
-                                },
-                            ),
-                            ("complete", JsValue::from_bool(bitfield.is_complete())),
-                        ]);
-                        let _ = callback.call1(&JsValue::NULL, &update);
                         if bitfield.is_complete() {
+                            send(&bitfield);
                             break;
+                        }
+                        let now = Instant::now();
+                        if now >= next_due {
+                            send(&bitfield);
+                            next_due = now + PROGRESS_INTERVAL;
+                            pending = None;
+                        } else {
+                            pending = Some(bitfield);
                         }
                     }
                 }
