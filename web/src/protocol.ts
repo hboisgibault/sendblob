@@ -1,4 +1,4 @@
-/** Types partagés + RPC typé main ↔ worker (postMessage). */
+/** Shared types + typed main ↔ worker RPC (postMessage). */
 
 export type ToWorker =
   | { kind: "spawn" }
@@ -44,7 +44,7 @@ export class WorkerRpc {
     };
   }
 
-  /** Appel RPC ; `transfer` liste les buffers à transférer sans copie. */
+  /** RPC call; `transfer` lists the buffers to transfer zero-copy. */
   call<T>(msg: ToWorker, transfer?: Transferable[]): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {

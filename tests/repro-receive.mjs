@@ -27,15 +27,15 @@ page.on("console", (msg) => {
 page.on("download", (d) => console.log("download event:", d.suggestedFilename()));
 
 await page.goto("http://localhost:5173/");
-await page.getByRole("button", { name: "Démarrer" }).click();
-await page.getByText("nœud prêt").waitFor({ timeout: 30_000 });
+await page.getByRole("button", { name: "Start" }).click();
+await page.getByText("node ready").waitFor({ timeout: 30_000 });
 console.log("node ready");
 
 await page.fill("#ticket-in", TICKET);
 await page.click("#btn-receive");
 console.log("receive clicked, waiting…");
 
-// surveille le statut jusqu'au succès/échec/crash
+// watch the status until success/failure/crash
 const deadline = Date.now() + 120_000;
 while (Date.now() < deadline) {
   const status = await page
@@ -44,7 +44,7 @@ while (Date.now() < deadline) {
   console.log(`[${((Date.now() - (deadline - 120_000)) / 1000).toFixed(1)}s] status:`, status);
   if (
     typeof status === "string" &&
-    (status.includes("fichier enregistré") || status.includes("erreur"))
+    (status.includes("file saved") || status.includes("error"))
   ) {
     break;
   }

@@ -1,8 +1,8 @@
 /**
- * Sérialisation ticket iroh-blobs ↔ fragment d'URL (#ticket=...).
+ * iroh-blobs ticket ↔ URL fragment (#ticket=...) serialization.
  *
- * Le ticket vit uniquement dans le fragment : il n'est jamais transmis à un
- * serveur (ni logs, ni analytics). Implémentation réelle en phase 3.
+ * The ticket lives only in the fragment: it is never sent to a server
+ * (no logs, no analytics). Real implementation in phase 3.
  */
 
 export function encodeTicket(_ticket: Uint8Array): string {

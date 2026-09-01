@@ -2,7 +2,6 @@
 /node_modules
 /dist
 /web/src/wasm
-/vendor
 /.playwright-mcp
 *.log
 .DS_Store

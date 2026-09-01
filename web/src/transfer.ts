@@ -1,9 +1,9 @@
 /**
- * Pipeline d'envoi/réception de fichiers.
+ * File send/receive pipeline.
  *
- * Envoi : `File.slice` (4 MiB) → worker → wasm → OPFS, outboard calculé
- * à la fin. Réception : écritures sparses validées dans l'OPFS, puis
- * sauvegarde zéro-copie via le `File` adossé au fichier OPFS.
+ * Send: `File.slice` (4 MiB) → worker → wasm → OPFS, outboard computed at
+ * the end. Receive: sparse validated writes into OPFS, then zero-copy save
+ * through the `File` backed by the OPFS file.
  */
 
 export interface TransferProgress {
@@ -11,10 +11,10 @@ export interface TransferProgress {
   bytesTotal: number;
 }
 
-/** Taille des chunks streamés vers le worker (4 MiB, cf. CHUNK_SIZE Rust). */
+/** Size of the chunks streamed to the worker (4 MiB, cf. Rust CHUNK_SIZE). */
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
-/** Intervalle de polling de progression (ms). */
+/** Progress polling interval (ms). */
 const PROGRESS_INTERVAL = 150;
 
 export async function sendFile(
@@ -51,7 +51,7 @@ export async function sendFile(
 export interface ReceivedFile {
   hash: string;
   size: number;
-  /** Déclenche l'enregistrement disque (blob adossé à l'OPFS, zéro copie). */
+  /** Triggers saving to disk (blob backed by OPFS, zero copy). */
   save: (filename: string) => Promise<void>;
 }
 
@@ -62,7 +62,7 @@ export async function receiveFile(
 ): Promise<ReceivedFile> {
   const hash = await rpc.call<string>({ kind: "hash_from_ticket", ticket });
 
-  // progression via statut (bitfield → octets validés)
+  // progress via status (bitfield → validated bytes)
   const stopPolling = pollStatus(rpc, hash, onProgress);
   try {
     await rpc.call({ kind: "download", ticket });
@@ -93,7 +93,7 @@ export async function receiveFile(
       document.body.appendChild(a);
       a.click();
       a.remove();
-      // le blob reste adossé à l'OPFS : pas de copie heap à révoquer en urgence
+      // the blob stays backed by OPFS: no heap copy to revoke urgently
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     },
   };
@@ -113,7 +113,7 @@ function pollProgress(
       const done = await rpc.call<number>({ kind: "import_progress", importId: id });
       if (!finished) onProgress({ bytesDone: done, bytesTotal: total });
     } catch {
-      /* l'import peut se terminer entre deux ticks */
+      /* the import may finish between two ticks */
     }
   }, PROGRESS_INTERVAL);
   return () => {
@@ -140,13 +140,13 @@ function pollStatus(
         onProgress({ bytesDone: total, bytesTotal: total });
       } else if (kind === "partial") {
         const done = Number(value);
-        // la taille totale n'est connue qu'au premier octet reçu ; on
-        // l'affiche sans total tant qu'on ne l'a pas (bytesTotal = done)
+        // the total size is only known once the first byte arrives; display
+        // without a total until we have it (bytesTotal = done)
         if (total > 0) onProgress({ bytesDone: done, bytesTotal: total });
         else onProgress({ bytesDone: done, bytesTotal: Math.max(done, 1) });
       }
     } catch {
-      /* tick suivant */
+      /* next tick */
     }
   }, PROGRESS_INTERVAL);
   return () => clearInterval(timer);

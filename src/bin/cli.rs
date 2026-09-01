@@ -1,10 +1,10 @@
-//! CLI compagnon sendblob : provide/download depuis le terminal.
+//! sendblob companion CLI: provide/download from the terminal.
 
 use anyhow::Result;
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
-use sendblob::node::BlobsNode;
 use iroh_blobs::ticket::BlobTicket;
+use sendblob::node::BlobsNode;
 
 #[derive(Parser)]
 #[command(name = "sendblob", version, about = "sendblob CLI companion")]
@@ -15,16 +15,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Offrir un fichier et afficher le ticket de transfert
+    /// Serve a file and print the transfer ticket
     Provide {
-        /// Chemin du fichier à partager
+        /// Path of the file to share
         path: String,
     },
-    /// Télécharger un blob depuis un ticket
+    /// Download a blob from a ticket
     Download {
-        /// Ticket produit par l'expéditeur
+        /// Ticket produced by the sender
         ticket: String,
-        /// Chemin de sortie optionnel
+        /// Optional output path
         #[arg(short, long)]
         out: Option<String>,
     },
@@ -42,19 +42,19 @@ async fn main() -> Result<()> {
             let data = tokio::fs::read(&path).await?;
             let ticket = node.import(Bytes::from(data)).await?;
             println!("⚡ Ticket: {ticket}");
-            println!("Partage en cours — Ctrl-C pour arrêter.");
+            println!("Sharing — Ctrl-C to stop.");
             tokio::signal::ctrl_c().await?;
         }
         Command::Download { ticket, out } => {
             let node = BlobsNode::spawn().await?;
             let ticket: BlobTicket = ticket.parse()?;
-            println!("⏳ Téléchargement…");
+            println!("⏳ Downloading…");
             let hash = node.download(ticket).await?;
             let size = node.complete_size(hash).await?;
             let bytes = node.get_bytes(hash).await?;
             let out = out.unwrap_or_else(|| format!("{hash}.bin"));
             tokio::fs::write(&out, &bytes).await?;
-            println!("✅ {size} octets écrits dans {out}");
+            println!("✅ {size} bytes written to {out}");
         }
     }
     Ok(())

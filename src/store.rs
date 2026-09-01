@@ -1,20 +1,19 @@
-//! Store local custom pour le navigateur : blobs adossés à l'OPFS.
+//! Custom local store for the browser: blobs backed by OPFS.
 //!
-//! Même architecture que `MemStore` (acteur irpc sur `proto::Command`),
-//! mais les données et les outboards vivent dans des fichiers OPFS :
-//! la RAM n'est plus limitante, d'où la cible 2 GiB+. Le code est partagé
-//! avec les tests natifs via le backend mémoire de [`crate::file`].
+//! Same architecture as `MemStore` (irpc actor on `proto::Command`), but data
+//! and outboards live in OPFS files: RAM is no longer the limiting factor,
+//! hence the 2 GiB+ target. The code is shared with native tests through the
+//! memory backend of [`crate::file`].
 //!
-//! Sous-ensemble de commandes implémenté (le reste répond une erreur) :
-//! `ImportBytes`, `ImportByteStream` (upload streamé), `ImportBao`
-//! (téléchargement en écritures validées sparses), `ExportBao` (service
-//! réseau), `ExportRanges` (lecture locale), `Observe`, `BlobStatus`,
-//! l'API tags minimale, `WaitIdle`, `Shutdown`.
+//! Implemented subset of commands (the rest replies with an error):
+//! `ImportBytes`, `ImportByteStream` (streamed upload), `ImportBao`
+//! (download with sparse validated writes), `ExportBao` (network serving),
+//! `ExportRanges` (local reads), `Observe`, `BlobStatus`, the minimal tags
+//! API, `WaitIdle`, `Shutdown`.
 //!
-//! Particularité : contrôle de quota injectable ([`Options::storage_check`])
-//! appelé par `ImportBao` dès que la taille du blob est connue (header bao),
-//! pour refuser proprement un téléchargement qui ne tiendrait pas dans le
-//! quota OPFS.
+//! Specificity: injectable quota check ([`Options::storage_check`]) called
+//! by `ImportBao` as soon as the blob size is known (bao header), to cleanly
+//! reject a download that would not fit in the OPFS quota.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -56,39 +55,40 @@ use tracing::{error, info, trace};
 
 use crate::file::{read_exact_at, BlobDir, BlobFile};
 
-/// Vérification de quota asynchrone : `Err(msg)` si l'espace est insuffisant.
+/// Asynchronous quota check: `Err(msg)` if space is insufficient.
 #[cfg(not(target_arch = "wasm32"))]
 pub type StorageCheck =
     Arc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync>;
+/// Asynchronous quota check: `Err(msg)` if space is insufficient.
 #[cfg(target_arch = "wasm32")]
 pub type StorageCheck = Arc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = Result<(), String>>>>>;
 
-/// Options de construction du [`LocalStore`].
+/// Construction options for the [`LocalStore`].
 #[derive(Default)]
 pub struct Options {
-    /// Répertoire de stockage. Par défaut : mémoire (natif).
+    /// Storage directory. Defaults to memory (native).
     pub dir: Option<Arc<dyn BlobDir>>,
-    /// Contrôle de quota, appelé à la réception dès que la taille est connue.
+    /// Quota check, called on reception as soon as the size is known.
     pub storage_check: Option<StorageCheck>,
 }
 
-/// Store local custom : blobs dans des fichiers (OPFS sur wasm).
+/// Custom local store: blobs in files (OPFS on wasm).
 #[derive(Clone)]
 pub struct LocalStore {
     client: ApiClient,
     entries: EntriesRef,
 }
 
-/// Carte partagée des entrées (acteur + tâches + accès wasm pour la sauvegarde).
+/// Shared map of entries (actor + tasks + wasm access for saving).
 type EntriesRef = Arc<Mutex<HashMap<Hash, Entry>>>;
 
-/// Entrée d'un blob : fichiers + bitfield observable.
+/// A blob's entry: files + observable bitfield.
 struct EntryShared {
-    /// Noms des fichiers (data, outboard) — pour le nettoyage.
+    /// Names of the files (data, outboard) — used for cleanup.
     names: (String, String),
     data: crate::file::BlobFileImpl,
     outboard: crate::file::BlobFileImpl,
-    /// Bitfield courant (ranges validés + taille), observable.
+    /// Current bitfield (validated ranges + size), observable.
     watch: tokio::sync::watch::Sender<Bitfield>,
 }
 
@@ -101,7 +101,7 @@ impl From<LocalStore> for iroh_blobs::api::Store {
 }
 
 impl LocalStore {
-    /// Démarre l'acteur du store et retourne le handle client.
+    /// Starts the store actor and returns the client handle.
     pub fn new_with_opts(opts: Options) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         let entries: EntriesRef = Arc::new(Mutex::new(HashMap::new()));
@@ -125,7 +125,7 @@ impl LocalStore {
         }
     }
 
-    /// Fichier data du blob, s'il est présent (pour la sauvegarde côté JS).
+    /// The blob's data file, if present (for JS-side saving).
     pub fn data_file(&self, hash: &Hash) -> Option<crate::file::BlobFileImpl> {
         self.entries
             .lock()
@@ -142,8 +142,8 @@ fn default_dir() -> Arc<dyn BlobDir> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        // wasm.rs construit toujours un LocalStore avec un OpfsDir ; ce
-        // fallback ne sert qu'à compiler.
+        // wasm.rs always builds a LocalStore with an OpfsDir; this fallback
+        // only exists so the code compiles.
         Arc::new(NullDir)
     }
 }
@@ -169,7 +169,7 @@ impl BlobDir for NullDir {
     }
 }
 
-/// Résultat d'une tâche d'import, traité par l'acteur (insertion de l'entrée).
+/// Result of an import task, processed by the actor (entry insertion).
 enum TaskResult {
     Unit(()),
     Import(Result<ImportEntry, api::Error>),
@@ -187,7 +187,7 @@ impl From<Result<ImportEntry, api::Error>> for TaskResult {
     }
 }
 
-/// Résultat d'un import réussi, à insérer dans l'état de l'acteur.
+/// Result of a successful import, to insert into the actor's state.
 struct ImportEntry {
     hash: Hash,
     size: u64,
@@ -232,7 +232,8 @@ impl Actor {
         self.entries.lock().unwrap().get(hash).cloned()
     }
 
-    /// Récupère l'entrée du hash, ou en crée une vide (fichiers + bitfield vide).
+    /// Fetches the entry for the hash, or creates an empty one (files +
+    /// empty bitfield).
     async fn get_or_create_entry(&mut self, hash: Hash) -> io::Result<Entry> {
         if let Some(entry) = self.get_entry(&hash) {
             return Ok(entry);
@@ -255,7 +256,7 @@ impl Actor {
         Ok(entry)
     }
 
-    /// Supprime une entrée partielle (fichiers inclus), ex. après un échec de quota.
+    /// Removes a partial entry (files included), e.g. after a quota failure.
     async fn remove_entry(&mut self, hash: &Hash) {
         let entry = self.entries.lock().unwrap().remove(hash);
         if let Some(entry) = entry {
@@ -265,7 +266,7 @@ impl Actor {
     }
 
     async fn run(mut self) {
-        // Entrée du blob vide (Hash::EMPTY), toujours disponible.
+        // Entry for the empty blob (Hash::EMPTY), always available.
         if let Err(err) = self.create_entry(Hash::EMPTY).await {
             error!("failed to create empty blob entry: {err}");
             return;
@@ -274,7 +275,7 @@ impl Actor {
             tokio::select! {
                 cmd = self.commands.recv() => {
                     let Some(cmd) = cmd else {
-                        // dernier client déconnecté : arrêt immédiat
+                        // last client disconnected: immediate shutdown
                         break None;
                     };
                     if let Some(shutdown) = self.handle_command(cmd).await {
@@ -322,7 +323,7 @@ impl Actor {
                     }));
                 }
                 std::collections::hash_map::Entry::Occupied(_) => {
-                    // déjà présent : supprime les fichiers temporaires
+                    // already present: delete the temporary files
                     let dir = self.dir.clone();
                     let names = entry.names.clone();
                     n0_future::task::spawn(async move {
@@ -376,7 +377,7 @@ impl Actor {
                         return None;
                     }
                 };
-                // déjà complet : répond sans réécrire
+                // already complete: reply without rewriting
                 if entry.watch.borrow().is_complete() {
                     tx.send(Ok(())).await.ok();
                     return None;
@@ -440,7 +441,7 @@ impl Actor {
                                 size: bitfield.size(),
                             }
                         } else {
-                            // progression utile pour l'UI : octets validés reçus
+                            // UI-useful progress: validated bytes received
                             BlobStatus::Partial {
                                 size: Some(bitfield.total_bytes()),
                             }
@@ -563,16 +564,16 @@ impl Actor {
             }
             Command::CreateTempTag(msg) => {
                 let proto::CreateTempTagMsg { tx, inner, .. } = msg;
-                // Pas de GC : les temp tags sont de purs marqueurs, sans
-                // comptage de référence (voir purge au démarrage).
+                // No GC: temp tags are pure markers, without reference
+                // counting (see startup purge).
                 tx.send(TempTag::new(inner.value, None)).await.ok();
             }
             Command::ListTempTags(msg) => {
                 msg.tx.send(Vec::new()).await.ok();
             }
             Command::Batch(msg) => {
-                // Non supporté : nos flux passent par Scope::GLOBAL. Répond un
-                // scope global (inerte sans GC) et ignore les Drop.
+                // Unsupported: our flows go through Scope::GLOBAL. Reply with
+                // a global scope (inert without GC) and ignore the Drops.
                 let proto::BatchMsg { tx, mut rx, .. } = msg;
                 tx.send(proto::Scope::GLOBAL).await.ok();
                 n0_future::task::spawn(async move { while let Ok(Some(_)) = rx.recv().await {} });
@@ -617,7 +618,7 @@ impl Actor {
     }
 }
 
-// ==== tâches d'import/export =================================================
+// ==== import/export tasks ====================================================
 
 async fn import_bytes_task(
     data: Bytes,
@@ -651,9 +652,9 @@ async fn import_bytes_task(
     })
 }
 
-/// Upload streamé : chaque chunk est écrit au fil de l'eau dans le fichier
-/// data ; l'outboard (layout pre-order) est calculé par relecture incrémentale
-/// une fois le flux terminé (RAM ≈ O(log n)).
+/// Streamed upload: each chunk is written to the data file as it arrives; the
+/// outboard (pre-order layout) is computed by incremental re-read once the
+/// stream is done (RAM ≈ O(log n)).
 async fn import_byte_stream(
     format: BlobFormat,
     mut rx: irpc::channel::mpsc::Receiver<ImportByteStreamUpdate>,
@@ -716,8 +717,8 @@ async fn import_byte_stream(
     })
 }
 
-/// Téléchargement : écritures validées sparses dans les fichiers data/outboard,
-/// bitfield mis à jour au fil des items (observable via `Observe`).
+/// Download: sparse validated writes into the data/outboard files, bitfield
+/// updated as items arrive (observable via `Observe`).
 async fn import_bao(
     entry: Entry,
     size: std::num::NonZeroU64,
@@ -725,7 +726,7 @@ async fn import_bao(
     tx: irpc::channel::oneshot::Sender<api::Result<()>>,
     storage_check: Option<StorageCheck>,
 ) -> Result<(), api::Error> {
-    // Contrôle de quota dès que la taille est connue, avant toute écriture.
+    // Quota check as soon as the size is known, before any write.
     if let Some(check) = &storage_check {
         if let Err(msg) = check(size.get()).await {
             tx.send(Err(api::Error::other(msg))).await.ok();
@@ -872,7 +873,7 @@ fn send_err(err: irpc::channel::SendError) -> api::Error {
     api::Error::Io(err.into())
 }
 
-/// Wrapper `mixed::Sender` sur un sender irpc.
+/// `mixed::Sender` wrapper over an irpc sender.
 struct EncodedSender<'a>(&'a mut irpc::channel::mpsc::Sender<EncodedItem>);
 
 impl bao_tree::io::mixed::Sender for EncodedSender<'_> {
@@ -883,7 +884,7 @@ impl bao_tree::io::mixed::Sender for EncodedSender<'_> {
     }
 }
 
-/// Lecture par octets (bao `mixed`) d'un fichier backend.
+/// Byte-wise reads (bao `mixed`) from a backend file.
 struct DataView(crate::file::BlobFileImpl);
 
 impl ReadBytesAt for DataView {
@@ -892,7 +893,7 @@ impl ReadBytesAt for DataView {
     }
 }
 
-/// Outboard en lecture depuis le fichier backend (layout pre-order iroh).
+/// Read-only outboard over a backend file (iroh pre-order layout).
 struct OutboardView {
     root: blake3::Hash,
     tree: BaoTree,
@@ -920,7 +921,7 @@ impl Outboard for OutboardView {
     }
 }
 
-/// Lecteur séquentiel sur un fichier backend (`AsyncStreamReader` pour
+/// Sequential reader over a backend file (`AsyncStreamReader` for
 /// `fsm::outboard`).
 struct FileStreamReader {
     file: crate::file::BlobFileImpl,
@@ -954,8 +955,8 @@ impl iroh_io::AsyncStreamReader for FileStreamReader {
     }
 }
 
-/// Wrapper écriture asynchrone sur un fichier backend (pour l'outboard
-/// incrémental pendant l'upload).
+/// Async write wrapper over a backend file (for the incremental outboard
+/// during upload).
 struct AsyncFileWriter(crate::file::BlobFileImpl);
 
 impl iroh_io::AsyncSliceWriter for AsyncFileWriter {
@@ -987,8 +988,8 @@ mod tests {
         LocalStore::new_with_opts(Default::default()).into()
     }
 
-    /// Encodage bao de référence (taille + parents + leaves) via les API
-    /// synchrones de bao_tree.
+    /// Reference bao encoding (size + parents + leaves) using bao_tree's
+    /// synchronous APIs.
     fn reference_bao(data: &[u8], ranges: &ChunkRanges) -> (Hash, Vec<u8>) {
         let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
         let mut encoded = Vec::new();
@@ -999,7 +1000,7 @@ mod tests {
         (outboard.root.into(), encoded)
     }
 
-    /// Collecte le flux export_bao complet en octets.
+    /// Collects the full export_bao stream into bytes.
     async fn collect_export(store: &api::Store, hash: Hash) -> Vec<u8> {
         let mut stream = store.export_bao(hash, ChunkRanges::all()).stream();
         let mut out = Vec::new();
@@ -1028,7 +1029,7 @@ mod tests {
             BlobStatus::Complete { size: 100_000 }
         ));
 
-        // export + réimport dans un second store, lecture + comparaison
+        // export + reimport into a second store, read + compare
         let bao = collect_export(&store, hash).await;
         let (_, reference) = reference_bao(&data, &ChunkRanges::all());
         assert_eq!(bao, reference);
@@ -1103,7 +1104,7 @@ mod tests {
             &mut bao,
         )
         .map_err(|e| io::Error::other(e.to_string()))?;
-        // encodage du sous-ensemble (chunk 0 seulement)
+        // encode the subset (chunk 0 only)
         let mut bao_partial = Vec::new();
         bao_partial.extend_from_slice(&(data.len() as u64).to_le_bytes());
         bao_tree::io::sync::encode_ranges_validated(
@@ -1118,12 +1119,12 @@ mod tests {
             .import_bao_bytes(hash, ChunkRanges::from(..ChunkNum(1)), bao_partial)
             .await?;
         let partial_out = dir.contents(&format!("{hash}.out"));
-        // outboard partiel : préfixe strict du outboard de référence (écriture sparse)
+        // partial outboard: strict prefix of the reference outboard (sparse writes)
         assert!(
             !partial_out.is_empty()
                 && partial_out.len() <= outboard.data.len()
                 && partial_out.as_slice() == &outboard.data[..partial_out.len()],
-            "outboard partiel invalide : len={} réf={}",
+            "invalid partial outboard: len={} ref={}",
             partial_out.len(),
             outboard.data.len()
         );
@@ -1132,7 +1133,7 @@ mod tests {
             .import_bao_bytes(hash, ChunkRanges::all(), bao)
             .await?;
         let full_out = dir.contents(&format!("{hash}.out"));
-        // outboard complet : identique octet pour octet au outboard de référence
+        // full outboard: byte-identical to the reference outboard
         assert_eq!(full_out, outboard.data);
         let full_data = dir.contents(&format!("{hash}.data"));
         assert_eq!(full_data, data);
@@ -1164,14 +1165,14 @@ mod tests {
             }
         });
 
-        // import partiel : premier chunk seulement
+        // partial import: first chunk only
         store
             .import_bao_bytes(hash, ChunkRanges::from(..ChunkNum(1)), bao_partial)
             .await?;
         let status = store.status(hash).await?;
         assert!(matches!(status, BlobStatus::Partial { size: Some(_) }));
 
-        // complétion
+        // completion
         store
             .import_bao_bytes(hash, ChunkRanges::all(), bao)
             .await?;
@@ -1182,7 +1183,7 @@ mod tests {
         let bytes = store.get_bytes(hash).await?;
         assert_eq!(bytes.as_ref(), &data);
 
-        // le flux observe a bien vu l'état complet (sinon panic dans le timeout)
+        // the observe stream did see the complete state (otherwise panic in the timeout)
         tokio::time::timeout(std::time::Duration::from_secs(5), watcher)
             .await
             .map_err(|_| -> io::Error { io::Error::other("observe never completed") })??;
@@ -1207,7 +1208,7 @@ mod tests {
         let check: StorageCheck = Arc::new(move |size| {
             Box::pin(async move {
                 if size > limit {
-                    Err("trop grand".to_string())
+                    Err("too large".to_string())
                 } else {
                     Ok(())
                 }
@@ -1222,13 +1223,13 @@ mod tests {
         let data = vec![9u8; 128 * 1024];
         let (hash, bao) = reference_bao(&data, &ChunkRanges::all());
 
-        // refus : taille > quota
+        // rejection: size > quota
         let err = store
             .import_bao_bytes(hash, ChunkRanges::all(), bao.clone())
             .await;
         assert!(err.is_err(), "expected quota rejection");
 
-        // accepté sous le plafond
+        // accepted under the limit
         let small = vec![1u8; 1024];
         let (hash2, bao2) = reference_bao(&small, &ChunkRanges::all());
         store

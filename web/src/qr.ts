@@ -1,6 +1,6 @@
 /**
- * Génération de QR code locale (lib `qrcode`, zéro service externe).
- * Implémentation réelle en phase 4.
+ * Local QR code generation (`qrcode` lib, zero external services).
+ * Real implementation in phase 4.
  */
 
 export async function renderQr(_text: string, _target: HTMLElement): Promise<void> {

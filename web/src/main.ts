@@ -8,30 +8,30 @@ app.innerHTML = `
   <main class="mx-auto flex h-full max-w-2xl flex-col gap-6 px-4 py-8">
     <header class="text-center">
       <h1 class="text-4xl font-bold tracking-tight">⚡ sendblob</h1>
-      <p class="mt-1 text-sm text-slate-400">Phase 2 — transfert de fichiers P2P (store OPFS, jusqu'à plusieurs Gio)</p>
+      <p class="mt-1 text-sm text-slate-400">Phase 2 — P2P file transfer (OPFS store, up to several GiB)</p>
     </header>
 
     <section class="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/60 p-4">
       <div>
-        <div class="text-xs uppercase tracking-wide text-slate-500">Nœud</div>
-        <div id="node-id" class="font-mono text-sm text-slate-300">non démarré</div>
+        <div class="text-xs uppercase tracking-wide text-slate-500">Node</div>
+        <div id="node-id" class="font-mono text-sm text-slate-300">not started</div>
       </div>
       <button id="btn-start" class="rounded-lg bg-sky-600 px-4 py-2 font-medium text-white transition hover:bg-sky-500">
-        Démarrer
+        Start
       </button>
     </section>
 
     <section class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-      <h2 class="mb-2 font-semibold">Envoyer un fichier</h2>
+      <h2 class="mb-2 font-semibold">Send a file</h2>
       <div id="drop-zone"
         class="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-700 p-6 text-center transition hover:border-sky-500">
-        <span class="text-sm text-slate-300">Glissez un fichier ici, ou cliquez pour choisir</span>
+        <span class="text-sm text-slate-300">Drop a file here, or click to browse</span>
         <span id="file-name" class="font-mono text-xs text-slate-500"></span>
         <input id="file-input" type="file" class="hidden" />
       </div>
       <button id="btn-send" disabled
         class="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40">
-        Partager
+        Share
       </button>
       <div class="mt-2 h-2 overflow-hidden rounded bg-slate-800">
         <div id="send-bar" class="h-full w-0 bg-emerald-500 transition-all"></div>
@@ -40,14 +40,14 @@ app.innerHTML = `
     </section>
 
     <section class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-      <h2 class="mb-2 font-semibold">Recevoir</h2>
-      <input id="ticket-in" placeholder="Coller un ticket…"
+      <h2 class="mb-2 font-semibold">Receive</h2>
+      <input id="ticket-in" placeholder="Paste a ticket…"
         class="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs outline-none focus:border-sky-500" />
       <div class="mt-2 flex items-center gap-3">
-        <input id="filename-in" placeholder="Nom du fichier (défaut : sendblob-<hash>.bin)"
+        <input id="filename-in" placeholder="Filename (default: sendblob-<hash>.bin)"
           class="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm outline-none focus:border-sky-500" />
         <button id="btn-receive" class="shrink-0 rounded-lg bg-sky-600 px-4 py-2 font-medium text-white transition hover:bg-sky-500">
-          Recevoir
+          Receive
         </button>
       </div>
       <div class="mt-3 h-2 overflow-hidden rounded bg-slate-800">
@@ -57,30 +57,30 @@ app.innerHTML = `
         <span id="recv-progress" class="text-xs text-slate-400"></span>
         <button id="btn-save" hidden
           class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-500">
-          Enregistrer le fichier
+          Save file
         </button>
       </div>
     </section>
 
     <section class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-      <h2 class="mb-2 font-semibold">Texte (spike phase 1)</h2>
-      <textarea id="share-text" rows="2" placeholder="Texte à partager…"
+      <h2 class="mb-2 font-semibold">Text (phase 1 spike)</h2>
+      <textarea id="share-text" rows="2" placeholder="Text to share…"
         class="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm outline-none focus:border-sky-500"></textarea>
       <div class="mt-2 flex items-center gap-2">
         <button id="btn-share" class="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white transition hover:bg-emerald-500">
-          Partager
+          Share
         </button>
-        <input id="text-ticket-in" placeholder="Coller un ticket texte…"
+        <input id="text-ticket-in" placeholder="Paste a text ticket…"
           class="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 font-mono text-xs outline-none focus:border-sky-500" />
         <button id="btn-receive-text" class="shrink-0 rounded-lg bg-sky-600 px-4 py-2 font-medium text-white transition hover:bg-sky-500">
-          Recevoir
+          Receive
         </button>
       </div>
       <pre id="text-out" class="mt-3 hidden max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-sm text-slate-200"></pre>
     </section>
 
     <section class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-      <h2 class="mb-2 font-semibold">Bench OPFS (S2)</h2>
+      <h2 class="mb-2 font-semibold">OPFS bench (S2)</h2>
       <div class="flex flex-wrap gap-2">
         <button data-chunk="1" class="bench-btn rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:border-sky-500">chunks 1 MiB</button>
         <button data-chunk="4" class="bench-btn rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:border-sky-500">chunks 4 MiB</button>
@@ -100,10 +100,10 @@ const input = (sel: string) => document.querySelector<HTMLInputElement>(sel)!;
 const setStatus = (msg: string) => ($(" #global-status").textContent = msg);
 
 const fmtBytes = (n: number) => {
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} Gio`;
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} Mio`;
-  if (n >= 1024) return `${(n / 1024).toFixed(0)} Kio`;
-  return `${n} o`;
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GiB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KiB`;
+  return `${n} B`;
 };
 
 const setBar = (sel: string, done: number, total: number) => {
@@ -111,25 +111,25 @@ const setBar = (sel: string, done: number, total: number) => {
   $(sel).style.width = `${pct}%`;
 };
 
-// ==== nœud ==================================================================
+// ==== node ===================================================================
 
 const btnStart = document.querySelector<HTMLButtonElement>("#btn-start")!;
 let started = false;
 btnStart.addEventListener("click", async () => {
-  setStatus("démarrage du nœud…");
+  setStatus("starting node…");
   try {
     await rpc.call({ kind: "spawn" });
     const id = await rpc.call<string>({ kind: "endpoint_id" });
     $(" #node-id").textContent = id;
     btnStart.disabled = true;
     started = true;
-    setStatus("nœud prêt ✔");
+    setStatus("node ready ✔");
   } catch (err) {
-    setStatus(`erreur : ${err}`);
+    setStatus(`error: ${err}`);
   }
 });
 
-// ==== envoi de fichier ======================================================
+// ==== file sending ==========================================================
 
 const dropZone = $(" #drop-zone");
 const fileInput = input("#file-input");
@@ -163,23 +163,23 @@ $(" #btn-send").addEventListener("click", async () => {
   if (!selectedFile || !started) return;
   const file = selectedFile;
   try {
-    setStatus(`envoi de ${file.name}…`);
+    setStatus(`sending ${file.name}…`);
     $(" #ticket-out").classList.add("hidden");
     const ticket = await sendFile(rpc, file, (p) => {
       setBar(" #send-bar", p.bytesDone, p.bytesTotal);
-      setStatus(`envoi : ${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}`);
+      setStatus(`send: ${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}`);
     });
     const out = $(" #ticket-out");
     out.textContent = ticket;
     out.classList.remove("hidden");
-    setStatus(`ticket prêt — colle-le dans l'autre onglet ✔ (${file.name})`);
+    setStatus(`ticket ready — paste it into the other tab ✔ (${file.name})`);
   } catch (err) {
-    setStatus(`erreur d'envoi : ${err}`);
+    setStatus(`send error: ${err}`);
     $(" #send-bar").style.width = "0%";
   }
 });
 
-// ==== réception de fichier ==================================================
+// ==== file receiving ========================================================
 
 $(" #btn-receive").addEventListener("click", async () => {
   const ticket = input("#ticket-in").value.trim();
@@ -189,21 +189,21 @@ $(" #btn-receive").addEventListener("click", async () => {
   saveBtn.hidden = true;
   $(" #recv-bar").style.width = "0%";
   try {
-    setStatus("téléchargement…");
+    setStatus("downloading…");
     receivedFile = await receiveFile(rpc, ticket, (p) => {
       setBar(" #recv-bar", p.bytesDone, p.bytesTotal);
       setStatus(
         p.bytesTotal > 1
-          ? `réception : ${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}`
-          : `réception : ${fmtBytes(p.bytesDone)}`,
+          ? `receive: ${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}`
+          : `receive: ${fmtBytes(p.bytesDone)}`,
       );
     });
-    setStatus(`fichier reçu : ${fmtBytes(receivedFile.size)} ✔`);
+    setStatus(`file received: ${fmtBytes(receivedFile.size)} ✔`);
     saveBtn.hidden = false;
-    // sauvegarde automatique immédiate
+    // immediate auto-save
     await save();
   } catch (err) {
-    setStatus(`erreur de réception : ${err}`);
+    setStatus(`receive error: ${err}`);
   }
 });
 
@@ -214,15 +214,15 @@ async function save() {
     `sendblob-${receivedFile.hash.slice(0, 8)}.bin`;
   try {
     await receivedFile.save(name);
-    setStatus(`fichier enregistré : ${name} ✔`);
+    setStatus(`file saved: ${name} ✔`);
   } catch (err) {
-    setStatus(`erreur de sauvegarde : ${err}`);
+    setStatus(`save error: ${err}`);
   }
 }
 
 $(" #btn-save").addEventListener("click", save);
 
-// ==== spike texte (phase 1) =================================================
+// ==== text spike (phase 1) ===================================================
 
 $(" #btn-share").addEventListener("click", async () => {
   const text = (document.querySelector<HTMLTextAreaElement>("#share-text")!).value;
@@ -233,9 +233,9 @@ $(" #btn-share").addEventListener("click", async () => {
       data: new TextEncoder().encode(text),
     });
     input("#text-ticket-in").value = ticket;
-    setStatus("ticket texte prêt ✔");
+    setStatus("text ticket ready ✔");
   } catch (err) {
-    setStatus(`erreur : ${err}`);
+    setStatus(`error: ${err}`);
   }
 });
 
@@ -249,9 +249,9 @@ $(" #btn-receive-text").addEventListener("click", async () => {
     const out = $(" #text-out");
     out.textContent = new TextDecoder().decode(bytes);
     out.classList.remove("hidden");
-    setStatus(`texte reçu (${bytes.length} octets) ✔`);
+    setStatus(`text received (${bytes.length} bytes) ✔`);
   } catch (err) {
-    setStatus(`erreur : ${err}`);
+    setStatus(`error: ${err}`);
   }
 });
 
@@ -268,9 +268,9 @@ document.querySelectorAll<HTMLButtonElement>(".bench-btn").forEach((btn) => {
         sizeMb: 64,
         chunkMb,
       });
-      out.textContent = `écriture ${r.writeMbs.toFixed(0)} Mo/s — lecture ${r.readMbs.toFixed(0)} Mo/s (chunks ${chunkMb} MiB)`;
+      out.textContent = `write ${r.writeMbs.toFixed(0)} MB/s — read ${r.readMbs.toFixed(0)} MB/s (chunks ${chunkMb} MiB)`;
     } catch (err) {
-      out.textContent = `erreur : ${err}`;
+      out.textContent = `error: ${err}`;
     }
   });
 });
