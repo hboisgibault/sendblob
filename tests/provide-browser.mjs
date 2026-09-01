@@ -16,7 +16,7 @@ const context = await browser.newContext();
 const page = await context.newPage();
 page.on("pageerror", (err) => console.log("pageerror:", err.message));
 
-await page.goto("http://localhost:5173/");
+await page.goto(process.env.URL ?? "http://localhost:5173/");
 // the node starts by itself (no start button)
 await page.waitForSelector('#node-status[data-state="ready"]', { timeout: 30_000 });
 console.log("node ready");
