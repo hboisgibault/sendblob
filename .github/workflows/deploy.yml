@@ -19,15 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-bindgen-cli
-        run: |
-          VERSION=0.2.122
-          curl -sL "https://github.com/rustwasm/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-          echo "$PWD/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-wasm
       - uses: actions/setup-node@v4
         with:
           node-version: 24

@@ -1,0 +1,23 @@
+name: Setup wasm build env
+description: Installs Rust (wasm32 target) and the wasm-bindgen-cli pinned by the project.
+
+inputs:
+  wasm-bindgen-version:
+    description: wasm-bindgen-cli version (must match the wasm-bindgen crate)
+    required: false
+    default: 0.2.122
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+        components: clippy
+    - uses: Swatinem/rust-cache@v2
+    - name: Install wasm-bindgen-cli
+      run: |
+        VERSION=${{ inputs.wasm-bindgen-version }}
+        curl -sL "https://github.com/rustwasm/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+        echo "$PWD/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      shell: bash
