@@ -28,36 +28,33 @@ use std::{
 };
 
 use bao_tree::{
-    blake3,
+    BaoTree, ChunkNum, ChunkRanges, TreeNode, blake3,
     io::{
-        fsm,
-        mixed::{traverse_ranges_validated, EncodedItem, ReadBytesAt},
+        BaoContentItem, fsm,
+        mixed::{EncodedItem, ReadBytesAt, traverse_ranges_validated},
         outboard::PreOrderMemOutboard,
         sync::Outboard,
-        BaoContentItem,
     },
-    BaoTree, ChunkNum, ChunkRanges, TreeNode,
 };
 use bytes::Bytes;
 use iroh_blobs::{
+    BlobFormat, Hash, HashAndFormat,
     api::{
-        self,
+        self, ApiClient, TempTag,
         blobs::{AddProgressItem, BlobStatus},
         proto::{
             self, Bitfield, Command, ExportProgressItem, ExportRangesItem, ImportByteStreamUpdate,
             ListTagsRequest, TagInfo,
         },
-        ApiClient, TempTag,
     },
     protocol::ChunkRangesExt,
     store::IROH_BLOCK_SIZE,
-    BlobFormat, Hash, HashAndFormat,
 };
 use n0_future::task::JoinSet;
 use range_collections::range_set::RangeSetRange;
 use tracing::{error, info, trace};
 
-use crate::file::{read_exact_at, BlobDir, BlobFile};
+use crate::file::{BlobDir, BlobFile, read_exact_at};
 
 /// Asynchronous quota check: `Err(msg)` if space is insufficient.
 #[cfg(not(target_arch = "wasm32"))]
@@ -393,11 +390,11 @@ impl Actor {
                 // Quota check before creating anything: the size is known
                 // from the request (bao header), so a rejection leaves no
                 // entry and no file behind.
-                if let Some(check) = &self.storage_check {
-                    if let Err(msg) = check(inner.size.get()).await {
-                        tx.send(Err(api::Error::other(msg))).await.ok();
-                        return None;
-                    }
+                if let Some(check) = &self.storage_check
+                    && let Err(msg) = check(inner.size.get()).await
+                {
+                    tx.send(Err(api::Error::other(msg))).await.ok();
+                    return None;
                 }
                 let entry = match self.get_or_create_entry(inner.hash).await {
                     Ok(entry) => entry,
@@ -532,15 +529,15 @@ impl Actor {
                     .tags
                     .iter()
                     .filter(|&(tag, value)| {
-                        if let Some(from) = &from {
-                            if tag < from {
-                                return false;
-                            }
+                        if let Some(from) = &from
+                            && tag < from
+                        {
+                            return false;
                         }
-                        if let Some(to) = &to {
-                            if tag >= to {
-                                return false;
-                            }
+                        if let Some(to) = &to
+                            && tag >= to
+                        {
+                            return false;
                         }
                         (raw && value.format.is_raw()) || (hash_seq && value.format.is_hash_seq())
                     })
@@ -560,15 +557,15 @@ impl Actor {
                 } = msg;
                 let mut deleted = 0;
                 self.tags.retain(|tag, _| {
-                    if let Some(from) = &from {
-                        if tag < from {
-                            return true;
-                        }
+                    if let Some(from) = &from
+                        && tag < from
+                    {
+                        return true;
                     }
-                    if let Some(to) = &to {
-                        if tag >= to {
-                            return true;
-                        }
+                    if let Some(to) = &to
+                        && tag >= to
+                    {
+                        return true;
                     }
                     deleted += 1;
                     false

@@ -87,7 +87,7 @@ pub fn read_exact_at(file: &impl BlobFile, offset: u64, size: usize) -> io::Resu
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{BlobFileImpl, MemDir};
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{js_error, BlobFileImpl, OpfsDir, OpfsFile};
+pub use wasm::{BlobFileImpl, OpfsDir, OpfsFile, js_error};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {

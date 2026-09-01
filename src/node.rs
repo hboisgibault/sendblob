@@ -4,14 +4,14 @@
 //! DNS/pkarr), an iroh-blobs store and the blobs protocol router. Modeled
 //! after the n0-computer/iroh-examples/browser-blobs example.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use data_encoding::BASE64URL_NOPAD;
-use iroh::{address_lookup::MemoryLookup, protocol::Router, Endpoint, EndpointId};
+use iroh::{Endpoint, EndpointId, address_lookup::MemoryLookup, protocol::Router};
 use iroh_blobs::{
-    api::{blobs::BlobStatus, downloader::Downloader, Store},
-    ticket::BlobTicket,
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
+    api::{Store, blobs::BlobStatus, downloader::Downloader},
+    ticket::BlobTicket,
 };
 
 /// Version byte of the compact ticket payload (see [`encode_compact`]).

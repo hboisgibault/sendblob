@@ -1,8 +1,8 @@
 [package]
 name = "sendblob"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.91"
 description = "Instant, browser-to-browser P2P file transfers powered by Iroh and WebAssembly"
 license = "MIT OR Apache-2.0"
 default-run = "sendblob-cli"

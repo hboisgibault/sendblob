@@ -11,22 +11,22 @@ use std::{
     collections::HashMap,
     str::FromStr,
     sync::{
-        atomic::{AtomicU32, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicU32, Ordering},
     },
 };
 
 use bytes::Bytes;
-use iroh_blobs::{ticket::BlobTicket, Hash};
+use iroh_blobs::{Hash, ticket::BlobTicket};
 use js_sys::Uint8Array;
 use tokio::sync::mpsc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber_wasm::MakeConsoleWriter;
-use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsError, JsValue};
+use wasm_bindgen::{JsCast, JsError, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::JsFuture;
 
 use crate::{
-    file::{js_error, OpfsDir},
+    file::{OpfsDir, js_error},
     store::{LocalStore, Options, StorageCheck},
 };
 
