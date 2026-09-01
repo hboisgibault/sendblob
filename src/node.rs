@@ -115,3 +115,17 @@ impl BlobsNode {
         Ok(BlobTicket::new(addr, hash, format))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Garde-fou du micro-patch iroh-blobs : `api::Store::local` doit rester
+    /// public et accepter un canal local standard (contrat du fork
+    /// `sendblob/local-store-ctor`).
+    #[test]
+    fn local_store_constructor_is_public() {
+        use iroh_blobs::api::Store;
+        let (tx, rx) = tokio::sync::mpsc::channel::<iroh_blobs::api::proto::Command>(1);
+        drop(rx);
+        let _store = Store::local(tx.into());
+    }
+}

@@ -35,3 +35,10 @@ wasm-bindgen-futures = "0.4"
 [features]
 default = []
 cli = ["dep:clap", "tokio/full"]
+
+# Micro-patch : expose `api::Store::local` (constructeur public) pour brancher
+# le store OPFS custom. Branche `sendblob/local-store-ctor` du fork
+# hboisgibault/iroh-blobs (diff : +22/-2 sur src/api.rs, à rebaser par release
+# d'amont). PR upstream à ouvrir quand n0 sera prêt à en discuter.
+[patch.crates-io]
+iroh-blobs = { git = "https://github.com/hboisgibault/iroh-blobs", branch = "sendblob/local-store-ctor" }

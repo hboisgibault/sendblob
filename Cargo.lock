@@ -1766,8 +1766,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.103.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5be50b0e2d0a9ba65cee4e0dfb708b3704e02ad12bd4c14c6307e94245943126"
+source = "git+https://github.com/hboisgibault/iroh-blobs?branch=sendblob/local-store-ctor#8a76a92536292bc0b8fff5170c472bf7d686ef35"
 dependencies = [
  "arrayvec",
  "bao-tree",
