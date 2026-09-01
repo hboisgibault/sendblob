@@ -91,55 +91,9 @@ async function isFile(dir: FileSystemDirectoryHandle, name: string): Promise<boo
   }
 }
 
-interface BenchResult {
-  writeMbs: number;
-  readMbs: number;
-  writeMs: number;
-  readMs: number;
-}
-
-/** S2: bench OPFS SyncAccessHandle throughput (sequential write + read). */
-async function benchOpfs(sizeMb: number, chunkMb: number): Promise<BenchResult> {
-  const root = await navigator.storage.getDirectory();
-  const name = `sendblob-bench-${Date.now()}`;
-  const fh = await root.getFileHandle(name, { create: true });
-  const access = await fh.createSyncAccessHandle();
-  try {
-    const chunk = new Uint8Array(chunkMb * 1024 * 1024);
-    for (let i = 0; i < chunk.length; i += 65536) {
-      crypto.getRandomValues(chunk.subarray(i, Math.min(i + 65536, chunk.length)));
-    }
-    const total = sizeMb * 1024 * 1024;
-
-    let offset = 0;
-    const t0 = performance.now();
-    while (offset < total) {
-      access.write(chunk, { at: offset });
-      offset += chunk.length;
-    }
-    access.flush();
-    const writeMs = performance.now() - t0;
-
-    const buf = new Uint8Array(chunk.length);
-    let read = 0;
-    const t1 = performance.now();
-    while (read < total) {
-      const n = Math.min(buf.length, total - read);
-      access.read(buf.subarray(0, n), { at: read });
-      read += n;
-    }
-    const readMs = performance.now() - t1;
-
-    return {
-      writeMbs: sizeMb / (writeMs / 1000),
-      readMbs: sizeMb / (readMs / 1000),
-      writeMs,
-      readMs,
-    };
-  } finally {
-    access.close();
-    await root.removeEntry(name);
-  }
+interface StorageEstimate {
+  usage: number;
+  quota: number;
 }
 
 async function handle(msg: ToWorker): Promise<unknown> {
@@ -154,6 +108,10 @@ async function handle(msg: ToWorker): Promise<unknown> {
     }
     case "endpoint_id":
       return node!.endpoint_id();
+    case "storage_estimate": {
+      const est = (await navigator.storage.estimate()) as StorageEstimate;
+      return { usage: est.usage ?? 0, quota: est.quota ?? 0 };
+    }
     case "import":
       return node!.import(msg.data);
     case "import_begin":
@@ -172,12 +130,16 @@ async function handle(msg: ToWorker): Promise<unknown> {
       return node!.hash_from_ticket(msg.ticket);
     case "status":
       return node!.status(msg.hash);
+    case "observe":
+      return node!.observe(msg.hash, (update: object) => {
+        self.postMessage({ event: "progress", hash: msg.hash, ...update });
+      });
+    case "unobserve":
+      return node!.unobserve(msg.id);
     case "save":
       return node!.save_file(msg.hash);
     case "get":
       return node!.get(msg.hash);
-    case "bench_opfs":
-      return benchOpfs(msg.sizeMb, msg.chunkMb);
   }
 }
 

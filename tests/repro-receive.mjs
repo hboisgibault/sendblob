@@ -27,10 +27,12 @@ page.on("console", (msg) => {
 page.on("download", (d) => console.log("download event:", d.suggestedFilename()));
 
 await page.goto("http://localhost:5173/");
-await page.getByRole("button", { name: "Start" }).click();
-await page.getByText("node ready").waitFor({ timeout: 30_000 });
+// the node starts by itself (no start button)
+await page.waitForSelector('#node-status[data-state="ready"]', { timeout: 30_000 });
 console.log("node ready");
 
+const toggle = page.getByRole("button", { name: "Paste a ticket instead" });
+if (await toggle.isVisible().catch(() => false)) await toggle.click();
 await page.fill("#ticket-in", TICKET);
 await page.click("#btn-receive");
 console.log("receive clicked, waiting…");

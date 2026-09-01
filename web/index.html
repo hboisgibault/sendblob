@@ -1,16 +1,21 @@
 <!doctype html>
-<html lang="en" class="h-full">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2e8d5" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Crect width='10' height='10' fill='%232b2118'/%3E%3Crect x='1' y='1' width='8' height='8' fill='%23faf3e3'/%3E%3Crect x='3' y='2' width='4' height='1' fill='%23c2571b'/%3E%3Crect x='2' y='3' width='6' height='3' fill='%23c2571b'/%3E%3Crect x='3' y='6' width='4' height='1' fill='%23c2571b'/%3E%3C/svg%3E"
+    />
     <title>sendblob — instant P2P transfers</title>
     <meta
       name="description"
-      content="Browser-to-browser P2P file transfers powered by Iroh and WebAssembly. No cloud, no registration."
+      content="Browser-to-browser P2P file transfers. No cloud, no registration, no traces."
     />
   </head>
-  <body class="h-full bg-slate-950 text-slate-100 antialiased">
-    <div id="app" class="h-full"></div>
-    <script type="module" src="/src/main.ts"></script>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

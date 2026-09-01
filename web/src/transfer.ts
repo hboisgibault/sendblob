@@ -6,6 +6,8 @@
  * through the `File` backed by the OPFS file.
  */
 
+import type { BlobStatus, WorkerRpcLike } from "./protocol";
+
 export interface TransferProgress {
   bytesDone: number;
   bytesTotal: number;
@@ -15,7 +17,7 @@ export interface TransferProgress {
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
 export async function sendFile(
-  rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
+  rpc: WorkerRpcLike,
   file: File,
   onProgress?: (p: TransferProgress) => void,
 ): Promise<string> {
@@ -46,35 +48,41 @@ export interface ReceivedFile {
 }
 
 export async function receiveFile(
-  rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
+  rpc: WorkerRpcLike,
   ticket: string,
   onProgress?: (p: TransferProgress) => void,
 ): Promise<ReceivedFile> {
   const hash = await rpc.call<string>({ kind: "hash_from_ticket", ticket });
 
-  // progress via status (bitfield → validated bytes)
-  const stopPolling = pollStatus(rpc, hash, onProgress);
+  // progress pushed by the store (bitfield updates, cf. Rust `observe`)
+  const unsubscribe = onProgress
+    ? rpc.on((ev) => {
+        if (ev.hash !== hash) return;
+        onProgress({
+          bytesDone: ev.bytesDone,
+          // display without a total until the first byte arrives
+          bytesTotal: ev.bytesTotal ?? Math.max(ev.bytesDone, 1),
+        });
+      })
+    : null;
   try {
+    await rpc.call<number>({ kind: "observe", hash });
     await rpc.call({ kind: "download", ticket });
   } catch (err) {
-    stopPolling();
+    unsubscribe?.();
     throw err;
   }
-  stopPolling();
+  unsubscribe?.();
 
-  const size = await rpc.call<number>({ kind: "blob_size", hash });
+  const status = await rpc.call<BlobStatus>({ kind: "status", hash });
+  const size = status.size ?? 0;
   onProgress?.({ bytesDone: size, bytesTotal: size });
 
   return {
     hash,
     size,
     async save(filename: string) {
-      const handle = (await rpc.call<FileSystemFileHandle>({
-        kind: "save",
-        hash,
-      })) as FileSystemFileHandle & {
-        getFile(): Promise<File>;
-      };
+      const handle = await rpc.call<FileSystemFileHandle>({ kind: "save", hash });
       const file = await handle.getFile();
       const url = URL.createObjectURL(file);
       const a = document.createElement("a");
@@ -89,32 +97,3 @@ export async function receiveFile(
   };
 }
 
-function pollStatus(
-  rpc: { call<T>(msg: unknown, transfer?: Transferable[]): Promise<T> },
-  hash: string,
-  onProgress?: (p: TransferProgress) => void,
-): () => void {
-  if (!onProgress) return () => {};
-  let total = 0;
-  let finished = false;
-  const timer = setInterval(async () => {
-    if (finished) return;
-    try {
-      const status = await rpc.call<string>({ kind: "status", hash });
-      const [kind, value] = status.split(":");
-      if (kind === "complete") {
-        total = Number(value);
-        onProgress({ bytesDone: total, bytesTotal: total });
-      } else if (kind === "partial") {
-        const done = Number(value);
-        // the total size is only known once the first byte arrives; display
-        // without a total until we have it (bytesTotal = done)
-        if (total > 0) onProgress({ bytesDone: done, bytesTotal: total });
-        else onProgress({ bytesDone: done, bytesTotal: Math.max(done, 1) });
-      }
-    } catch {
-      /* next tick */
-    }
-  }, 150);
-  return () => clearInterval(timer);
-}

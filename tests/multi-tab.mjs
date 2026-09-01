@@ -30,22 +30,23 @@ const newTab = async (label) => {
     if (m.type() === "error") console.log(`[${label}] console:`, m.text().slice(0, 200));
   });
   await page.goto("http://localhost:5173/");
-  await page.getByRole("button", { name: "Start" }).click();
-  await page.getByText("node ready").waitFor();
+  // the node starts by itself (no start button)
+  await page.waitForSelector('#node-status[data-state="ready"]');
   console.log(`[${label}] node ready`);
   return page;
 };
 
 const send = async (page, label, path) => {
   await page.setInputFiles("#file-input", path);
-  await page.click("#btn-send");
-  await page.getByText("ticket ready").waitFor();
+  await page.getByText("Ready to share").waitFor();
   const ticket = await page.evaluate(() => document.getElementById("ticket-out").textContent);
   console.log(`[${label}] ticket: ${ticket.slice(0, 24)}…`);
   return ticket;
 };
 
 const receive = async (page, label, ticket) => {
+  const toggle = page.getByRole("button", { name: "Paste a ticket instead" });
+  if (await toggle.isVisible().catch(() => false)) await toggle.click();
   await page.fill("#ticket-in", ticket);
   await page.click("#btn-receive");
   await page.getByText(/file (saved|received)/).waitFor();
@@ -74,8 +75,7 @@ await receive(b, "B", await send(a, "A", file1));
 
 // 3. reload A
 await a.reload();
-await a.getByRole("button", { name: "Start" }).click();
-await a.getByText("node ready").waitFor();
+await a.waitForSelector('#node-status[data-state="ready"]');
 console.log("[A] node ready after reload");
 const dirsAfter = await opfsDirs(a);
 console.log(`OPFS directories after reload: ${dirsAfter.length} (expected 2)`);

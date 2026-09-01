@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Phase 3: share link (#t=<compact ticket>)
-// 1. tab A sends a file and copies the link
+// 1. tab A sends a file (auto-import) and copies the link
 // 2. the link is short (#t=…, 88-char compact payload, no server state)
 // 3. tab B opens the link: node auto-starts, file auto-receives
 // 4. the fragment is consumed from the address bar
@@ -26,17 +26,17 @@ const newTab = async (label) => {
   const page = await context.newPage();
   page.on("pageerror", (err) => console.log(`[${label}] pageerror:`, err.message));
   await page.goto("http://localhost:5173/");
-  await page.getByRole("button", { name: "Start" }).click();
-  await page.getByText("node ready").waitFor();
+  // the node starts by itself (no start button)
+  await page.waitForSelector('#node-status[data-state="ready"]');
   console.log(`[${label}] node ready`);
   return page;
 };
 
-// 1. A sends and copies the link
+// 1. A sends (auto-import on file pick) and copies the link
 const a = await newTab("A");
 await a.setInputFiles("#file-input", file1);
-await a.click("#btn-send");
-await a.getByText("ticket ready").waitFor();
+await a.getByText("Ready to share").waitFor();
+await a.waitForSelector("#qr-canvas");
 await a.click("#btn-copy-link");
 await a.getByText("link copied").waitFor();
 const link = await a.evaluate(() => navigator.clipboard.readText());
