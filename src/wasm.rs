@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    str::FromStr,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex, OnceLock,
@@ -32,12 +33,31 @@ use crate::{
 #[wasm_bindgen(start)]
 fn start() {
     console_error_panic_hook::set_once();
+    // "info" is a valid level: start() cannot fail.
+    init_tracing("info".to_string()).ok();
+}
+
+/// Sets up tracing to the browser console. Idempotent: only the first call
+/// wins. `level` is `"error"`, `"warn"`, `"info"`, `"debug"` or `"trace"`
+/// (case-insensitive).
+#[wasm_bindgen]
+pub fn init_tracing(level: String) -> Result<(), JsError> {
+    static DONE: OnceLock<()> = OnceLock::new();
+    let Ok(level) = LevelFilter::from_str(&level) else {
+        return Err(JsError::new(&format!(
+            "invalid log level: {level} (expected error|warn|info|debug|trace)"
+        )));
+    };
+    if DONE.set(()).is_err() {
+        return Ok(());
+    }
     tracing_subscriber::fmt()
-        .with_max_level(LevelFilter::INFO)
+        .with_max_level(level)
         .with_writer(MakeConsoleWriter::default().map_trace_level_to(tracing::Level::DEBUG))
         .without_time()
         .with_ansi(false)
         .init();
+    Ok(())
 }
 
 /// Crate version, handy to check the WASM/UI pairing.
@@ -61,6 +81,19 @@ fn next_import_id() -> u32 {
 fn pending_imports() -> &'static Mutex<HashMap<u32, PendingImport>> {
     static PENDING: OnceLock<Mutex<HashMap<u32, PendingImport>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Active progress subscriptions, cancelled through the stored sender.
+type Observables = HashMap<u32, tokio::sync::oneshot::Sender<()>>;
+
+fn next_observe_id() -> u32 {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    NEXT.fetch_add(1, Ordering::SeqCst)
+}
+
+fn observables() -> &'static Mutex<Observables> {
+    static OBSERVABLES: OnceLock<Mutex<Observables>> = OnceLock::new();
+    OBSERVABLES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// JS chunk flow → `Stream` for `add_stream`.

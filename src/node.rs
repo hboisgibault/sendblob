@@ -14,13 +14,6 @@ use iroh_blobs::{
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
 };
 
-/// Application-level ALPN identifier for sendblob (reserved, unused in the
-/// spike: browser↔CLI interop goes through the standard iroh-blobs ALPN).
-pub const ALPN: &[u8] = b"sendblob/blobs/0";
-
-/// Size of the chunks used to stream a file into the store (4 MiB).
-pub const CHUNK_SIZE: u32 = 4 * 1024 * 1024;
-
 /// Version byte of the compact ticket payload (see [`encode_compact`]).
 const COMPACT_VERSION: u8 = 1;
 
@@ -73,21 +66,6 @@ pub fn parse_ticket(s: &str) -> Result<(EndpointId, Hash, BlobFormat)> {
         return Ok((ticket.addr().id, ticket.hash(), ticket.format()));
     }
     decode_compact(s)
-}
-
-/// High-level states of a sendblob node, exposed to the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeStatus {
-    /// The node is not started.
-    Idle,
-    /// The iroh endpoint is binding.
-    Connecting,
-    /// The node is online and ready to transfer.
-    Ready,
-    /// A transfer is in progress.
-    Transferring,
-    /// The node is shut down.
-    Closed,
 }
 
 /// A sendblob node: iroh endpoint + blob store + protocol router.

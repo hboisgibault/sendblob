@@ -12,8 +12,12 @@
 //! API, `WaitIdle`, `Shutdown`.
 //!
 //! Specificity: injectable quota check ([`Options::storage_check`]) called
-//! by `ImportBao` as soon as the blob size is known (bao header), to cleanly
-//! reject a download that would not fit in the OPFS quota.
+//! by `ImportBao` before any entry or file is created, to cleanly reject a
+//! download that would not fit in the OPFS quota.
+//!
+//! File naming: uploads land in `upload-<counter>.data/.out` (name known
+//! only once the hash is computed), downloads in `<hash>.data/.out`; the
+//! actor's entry map carries the actual names for cleanup.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -473,7 +477,7 @@ impl Actor {
                 tx.send(status).await.ok();
             }
             Command::ListBlobs(cmd) => {
-                let hashes: Vec<Hash> = self.entries.lock().unwrap().keys().cloned().collect();
+                let hashes: Vec<Hash> = self.entries.lock().unwrap().keys().copied().collect();
                 self.spawn(async move {
                     for hash in hashes {
                         if cmd.tx.send(Ok(hash)).await.is_err() {
@@ -696,7 +700,7 @@ async fn import_byte_stream(
                     .await
                     .map_err(send_err)?;
             }
-            Ok(Some(ImportByteStreamUpdate::Done)) | Ok(None) => break,
+            Ok(Some(ImportByteStreamUpdate::Done) | None) => break,
             Err(err) => return Err(api::Error::Io(io::Error::other(err))),
         }
     }
@@ -1003,10 +1007,10 @@ mod tests {
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     fn test_store() -> api::Store {
-        LocalStore::new_with_opts(Default::default()).into()
+        LocalStore::new_with_opts(Options::default()).into()
     }
 
-    /// Reference bao encoding (size + parents + leaves) using bao_tree's
+    /// Reference bao encoding (size + parents + leaves) using `bao_tree`'s
     /// synchronous APIs.
     fn reference_bao(data: &[u8], ranges: &ChunkRanges) -> (Hash, Vec<u8>) {
         let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
@@ -1018,7 +1022,7 @@ mod tests {
         (outboard.root.into(), encoded)
     }
 
-    /// Collects the full export_bao stream into bytes.
+    /// Collects the full `export_bao` stream into bytes.
     async fn collect_export(store: &api::Store, hash: Hash) -> Vec<u8> {
         let mut stream = store.export_bao(hash, ChunkRanges::all()).stream();
         let mut out = Vec::new();

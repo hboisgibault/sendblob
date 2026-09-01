@@ -8,6 +8,12 @@
 //! Storage is *sparse* by construction: writes at arbitrary offsets extend
 //! the file (implicit zeros), which matches the progressive assembly of a
 //! bao download.
+//!
+//! [`BlobDir`] and [`DirFut`] are deliberately duplicated per target instead
+//! of being cfg'd through a helper trait: natively, `Arc<dyn BlobDir>` and
+//! the boxed futures must carry `+ Send` markers to cross `tokio::spawn`,
+//! and `dyn` auto-trait bounds cannot be injected through a cfg'd supertrait
+//! on the object type.
 
 use std::{future::Future, io, pin::Pin};
 
