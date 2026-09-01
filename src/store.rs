@@ -36,7 +36,7 @@ use bao_tree::{
         sync::Outboard,
     },
 };
-use bytes::Bytes;
+use bytes::{Buf, Bytes};
 use iroh_blobs::{
     BlobFormat, Hash, HashAndFormat,
     api::{
@@ -685,6 +685,7 @@ async fn import_byte_stream(
     let reader = FileStreamReader {
         file: data_file.clone(),
         pos: 0,
+        buf: Bytes::new(),
     };
     let root = fsm::outboard(reader, tree, &mut outboard)
         .await
@@ -765,11 +766,14 @@ async fn export_bao(
     };
     let bitfield = entry.watch.borrow().clone();
     let tree = BaoTree::new(bitfield.size(), IROH_BLOCK_SIZE);
-    let data = DataView(entry.data.clone());
+    // Preload the outboard into RAM (0.4% of the data): the traverse reads
+    // one 64-byte parent pair per node, an OPFS round trip each otherwise.
+    let outboard_data = read_exact_at(&entry.outboard, 0, tree.outboard_size() as usize)?;
+    let data = DataView::new(entry.data.clone());
     let outboard = OutboardView {
         root: hash.into(),
         tree,
-        file: entry.outboard.clone(),
+        data: outboard_data,
     };
     let mut sender = EncodedSender(&mut tx);
     let _ = traverse_ranges_validated(data, outboard, &ranges, &mut sender).await;
@@ -871,20 +875,62 @@ impl bao_tree::io::mixed::Sender for EncodedSender<'_> {
     }
 }
 
-/// Byte-wise reads (bao `mixed`) from a backend file.
-struct DataView(crate::file::BlobFileImpl);
+/// Read-ahead buffer size for sequential file reads (import hashing and
+/// serving): one backend round trip per MiB instead of per 1-16 KiB item.
+const READ_AHEAD: usize = 1024 * 1024;
 
-impl ReadBytesAt for DataView {
-    fn read_bytes_at(&self, offset: u64, size: usize) -> io::Result<Bytes> {
-        read_exact_at(&self.0, offset, size)
+/// Byte-wise reads (bao `mixed`) from a backend file, with a [`READ_AHEAD`]
+/// buffer: `traverse_ranges_validated` requests leaf-sized (16 KiB) reads,
+/// an OPFS round trip each without buffering.
+struct DataView(crate::file::BlobFileImpl, Mutex<ReadAhead>);
+
+/// Cached contiguous window of a data file.
+struct ReadAhead {
+    start: u64,
+    buf: Bytes,
+}
+
+impl DataView {
+    fn new(file: crate::file::BlobFileImpl) -> Self {
+        Self(
+            file,
+            Mutex::new(ReadAhead {
+                start: 0,
+                buf: Bytes::new(),
+            }),
+        )
     }
 }
 
-/// Read-only outboard over a backend file (iroh pre-order layout).
+impl ReadBytesAt for DataView {
+    fn read_bytes_at(&self, offset: u64, size: usize) -> io::Result<Bytes> {
+        let mut cache = self.1.lock().unwrap();
+        let end = offset + size as u64;
+        if !(cache.start <= offset && end <= cache.start + cache.buf.len() as u64) {
+            // Refill at the requested offset, tolerating EOF for the tail
+            // read (fall back to the exact size).
+            let buf = match read_exact_at(&self.0, offset, size.max(READ_AHEAD)) {
+                Ok(buf) => buf,
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                    read_exact_at(&self.0, offset, size)?
+                }
+                Err(e) => return Err(e),
+            };
+            *cache = ReadAhead {
+                start: offset,
+                buf,
+            };
+        }
+        let start = (offset - cache.start) as usize;
+        Ok(cache.buf.slice(start..start + size))
+    }
+}
+
+/// Read-only outboard over a preloaded pre-order buffer (iroh layout).
 struct OutboardView {
     root: blake3::Hash,
     tree: BaoTree,
-    file: crate::file::BlobFileImpl,
+    data: Bytes,
 }
 
 impl Outboard for OutboardView {
@@ -900,8 +946,12 @@ impl Outboard for OutboardView {
         let Some(offset) = self.tree.pre_order_offset(node) else {
             return Ok(None);
         };
-        let bytes = read_exact_at(&self.file, offset * 64, 64)?;
-        let (left, right) = bytes.as_ref().split_at(32);
+        let start = (offset * 64) as usize;
+        let bytes = self
+            .data
+            .get(start..start + 64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short outboard"))?;
+        let (left, right) = bytes.split_at(32);
         let left: [u8; 32] = left.try_into().unwrap();
         let right: [u8; 32] = right.try_into().unwrap();
         Ok(Some((blake3::Hash::from(left), blake3::Hash::from(right))))
@@ -910,16 +960,45 @@ impl Outboard for OutboardView {
 
 /// Sequential reader over a backend file (`AsyncStreamReader` for
 /// `fsm::outboard`).
+///
+/// The fsm hashes the data chunk by chunk (1 KiB), so without buffering each
+/// read would be a separate OPFS round trip (~170k for 173 MB). Reads are
+/// served from a [`READ_AHEAD`] buffer instead.
 struct FileStreamReader {
     file: crate::file::BlobFileImpl,
     pos: u64,
+    /// Read-ahead buffer starting at `pos` (invariant: `pos - buf.len()`).
+    buf: Bytes,
 }
 
 impl iroh_io::AsyncStreamReader for FileStreamReader {
     async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
-        let buf = read_some_at(&self.file, self.pos, len)?;
-        self.pos += buf.len() as u64;
-        Ok(buf)
+        if self.buf.is_empty() {
+            // Common refill: zero copy, `read_some_at` tolerates EOF.
+            self.buf = read_some_at(&self.file, self.pos, len.max(READ_AHEAD))?;
+        } else if self.buf.len() < len {
+            // Leftover shorter than the request (EOF region): concatenate
+            // with a read behind it, the only case needing a copy.
+            let want = len.max(READ_AHEAD);
+            let mut out = bytes::BytesMut::with_capacity(self.buf.len() + want);
+            out.extend_from_slice(&self.buf);
+            out.extend_from_slice(&read_some_at(
+                &self.file,
+                self.pos + self.buf.len() as u64,
+                want,
+            )?);
+            self.buf = out.freeze();
+        }
+        let n = len.min(self.buf.len());
+        let out = if n == self.buf.len() {
+            std::mem::take(&mut self.buf)
+        } else {
+            let out = self.buf.slice(..n);
+            self.buf.advance(n);
+            out
+        };
+        self.pos += n as u64;
+        Ok(out)
     }
 
     async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
