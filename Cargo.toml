@@ -61,6 +61,14 @@ cli = ["dep:clap", "tokio/full"]
 [dev-dependencies]
 tokio = { version = "1.44", features = ["rt", "rt-multi-thread", "macros"] }
 
+# Size-optimized release build for the browser (~wasm download weight).
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
 [lints.rust]
 missing_docs = "deny"
 
