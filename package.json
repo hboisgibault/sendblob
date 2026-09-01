@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build:wasm": "cargo build --target=wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/sendblob.wasm --out-dir=web/src/wasm --out-name=sendblob --target=web --weak-refs --debug",
-    "build:wasm:release": "cargo build --target=wasm32-unknown-unknown --release && wasm-bindgen target/wasm32-unknown-unknown/release/sendblob.wasm --out-dir=web/src/wasm --out-name=sendblob --target=web --weak-refs",
+    "build:wasm:release": "cargo build --target=wasm32-unknown-unknown --release && wasm-bindgen target/wasm32-unknown-unknown/release/sendblob.wasm --out-dir=web/src/wasm --out-name=sendblob --target=web --weak-refs && wasm-opt -Oz --strip-producers --enable-bulk-memory --enable-nontrapping-float-to-int --enable-mutable-globals --enable-sign-ext web/src/wasm/sendblob_bg.wasm -o web/src/wasm/sendblob_bg.wasm.opt && mv web/src/wasm/sendblob_bg.wasm.opt web/src/wasm/sendblob_bg.wasm",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && vite build",
     "build:release": "npm run build:wasm:release && vite build",
