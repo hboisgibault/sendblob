@@ -5,7 +5,7 @@ inputs:
   wasm-bindgen-version:
     description: wasm-bindgen-cli version (must match the wasm-bindgen crate)
     required: false
-    default: 0.2.122
+    default: 0.2.127
 
 runs:
   using: composite
@@ -18,6 +18,6 @@ runs:
     - name: Install wasm-bindgen-cli
       run: |
         VERSION=${{ inputs.wasm-bindgen-version }}
-        curl -sL "https://github.com/rustwasm/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
-        echo "$PWD/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+        curl -fsSL --retry 3 "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+        echo "$PWD/wasm-bindgen-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
       shell: bash
