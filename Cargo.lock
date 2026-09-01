@@ -1766,7 +1766,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.103.0"
-source = "git+https://github.com/hboisgibault/iroh-blobs?branch=sendblob/local-store-ctor#8a76a92536292bc0b8fff5170c472bf7d686ef35"
+source = "git+https://github.com/hboisgibault/iroh-blobs?branch=sendblob/local-store-ctor#102760beadc7e0ec5f79dd70f2f332fef30d65cd"
 dependencies = [
  "arrayvec",
  "bao-tree",
