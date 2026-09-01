@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check (native, toutes features)
+        run: cargo check --all-features
+      - name: Check (wasm32)
+        run: cargo check --target wasm32-unknown-unknown
+      - name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --all-features
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen-cli
+        run: |
+          VERSION=0.2.122
+          curl -sL "https://github.com/rustwasm/wasm-bindgen/releases/download/${VERSION}/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          echo "$PWD/wasm-bindgen-cli-${VERSION}-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build (wasm + vite)
+        run: npm run build
+      - name: Typecheck
+        run: npm run typecheck

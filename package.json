@@ -1,0 +1,20 @@
+{
+  "name": "sendblob",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cargo build --target=wasm32-unknown-unknown && wasm-bindgen target/wasm32-unknown-unknown/debug/sendblob.wasm --out-dir=web/src/wasm --out-name=sendblob --target=web --weak-refs --debug",
+    "build:wasm:release": "cargo build --target=wasm32-unknown-unknown --release && wasm-bindgen target/wasm32-unknown-unknown/release/sendblob.wasm --out-dir=web/src/wasm --out-name=sendblob --target=web --weak-refs",
+    "dev": "npm run build:wasm && vite",
+    "build": "npm run build:wasm && vite build",
+    "build:release": "npm run build:wasm:release && vite build",
+    "typecheck": "npm run build:wasm && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.6.0",
+    "vite": "^7.0.0"
+  }
+}
