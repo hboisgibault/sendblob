@@ -112,8 +112,6 @@ async function handle(msg: ToWorker): Promise<unknown> {
       const est = (await navigator.storage.estimate()) as StorageEstimate;
       return { usage: est.usage ?? 0, quota: est.quota ?? 0 };
     }
-    case "import":
-      return node!.import(msg.data);
     case "import_begin":
       return node!.import_begin(msg.size);
     case "import_chunk":
@@ -138,8 +136,6 @@ async function handle(msg: ToWorker): Promise<unknown> {
       return node!.unobserve(msg.id);
     case "save":
       return node!.save_file(msg.hash);
-    case "get":
-      return node!.get(msg.hash);
   }
 }
 

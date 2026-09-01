@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Receive: the store-side progress subscription (`observe`) is now cancelled
+  through `unobserve` when the transfer fails or after completion; a failed
+  download used to leak the subscription until the blob completed.
 - Store: a rejected quota check no longer leaves an empty entry and orphan
   files behind — the check now runs before anything is created.
 - Store: `import_bao` propagates IO failures to the caller through the
@@ -37,8 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automatic `start` hook uses `info`.
 - `BlobsNode::spawn` is native-only; the browser path is `spawn_with_store`
   with the OPFS store.
+- Store: `Options::dir` is now mandatory (`Arc<dyn BlobDir>`, in-memory dir
+  for native tests, OPFS dir in the browser); the wasm-only `NullDir` /
+  `default_dir` compile fallback is gone.
+- DRY: shared `js_object` helper replaces the three duplicated JS object
+  builders in the wasm bindings; shared file-cleanup helper (`remove_files`)
+  in the store actor; new `read_some_at` file helper reused by
+  `read_exact_at` and the store's stream reader; `state.ts` reuses
+  `clearTicketFromUrl` instead of inlining the fragment cleanup.
 - Dead code removed: `NodeStatus`, `ALPN`, `MAX_FILE_SIZE`, `CHUNK_SIZE`,
-  `PendingImport.name`.
+  `PendingImport.name`; phase-1 spike bindings `BlobsNode::import`
+  (single-shot bytes) and `BlobsNode::get` (text) with their worker RPC
+  kinds, and the `BlobsNode::endpoint` accessor (internal use only).
 - CI: `cargo fmt --check` runs on every build; the wasm build environment
   (toolchain + pinned `wasm-bindgen-cli`) is factored into a shared action.
 

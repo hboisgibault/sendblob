@@ -67,21 +67,31 @@ pub trait BlobFile: Clone + 'static {
     fn close(&self);
 }
 
-/// Reads exactly `size` bytes at `offset` (errors on premature EOF).
-pub fn read_exact_at(file: &impl BlobFile, offset: u64, size: usize) -> io::Result<Bytes> {
+/// Reads up to `size` bytes at `offset` (premature EOF yields a short read).
+pub fn read_some_at(file: &impl BlobFile, offset: u64, size: usize) -> io::Result<Bytes> {
     let mut buf = vec![0u8; size];
     let mut done = 0usize;
     while done < size {
         let n = file.read_at(offset + done as u64, &mut buf[done..])?;
         if n == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "short read from blob file",
-            ));
+            break;
         }
         done += n;
     }
+    buf.truncate(done);
     Ok(buf.into())
+}
+
+/// Reads exactly `size` bytes at `offset` (errors on premature EOF).
+pub fn read_exact_at(file: &impl BlobFile, offset: u64, size: usize) -> io::Result<Bytes> {
+    let buf = read_some_at(file, offset, size)?;
+    if buf.len() < size {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "short read from blob file",
+        ));
+    }
+    Ok(buf)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -183,18 +183,17 @@ struct BlobStatus {
 
 impl BlobStatus {
     fn to_js(&self) -> JsValue {
-        let obj = js_sys::Object::new();
-        let set = |key: &str, value: JsValue| -> Result<(), JsValue> {
-            js_sys::Reflect::set(&obj, &key.into(), &value).map(|_| ())
-        };
-        set("state", self.state.into())
-            .and_then(|_| set("bytesDone", JsValue::from_f64(self.bytes_done as f64)))
-            .and_then(|_| match self.size {
-                Some(size) => set("size", JsValue::from_f64(size as f64)),
-                None => set("size", JsValue::NULL),
-            })
-            .expect("status object keys are valid");
-        obj.into()
+        js_object(&[
+            ("state", self.state.into()),
+            ("bytesDone", JsValue::from_f64(self.bytes_done as f64)),
+            (
+                "size",
+                match self.size {
+                    Some(size) => JsValue::from_f64(size as f64),
+                    None => JsValue::NULL,
+                },
+            ),
+        ])
     }
 }
 
@@ -209,7 +208,7 @@ impl BlobsNode {
             .await
             .map_err(|e| JsError::new(&e.to_string()))?;
         let store = LocalStore::new_with_opts(Options {
-            dir: Some(Arc::new(dir)),
+            dir: Arc::new(dir),
             storage_check: Some(storage_check_closure()),
         });
         let node = crate::node::BlobsNode::spawn_with_store(store.clone().into())
@@ -221,27 +220,6 @@ impl BlobsNode {
     /// Identifier of the local endpoint.
     pub fn endpoint_id(&self) -> String {
         self.node.endpoint_id().to_string()
-    }
-
-    /// Imports bytes, returns the ticket (texts and small blobs).
-    pub async fn import(&self, data: Uint8Array) -> Result<String, JsError> {
-        let data = uint8array_to_bytes(&data);
-        tracing::info!("importing data of len {}", data.len());
-        let tag = self
-            .node
-            .blobs
-            .add_bytes(data)
-            .temp_tag()
-            .await
-            .map_err(to_js_err)?;
-        let hash = tag.hash();
-        drop(tag);
-        let ticket = self
-            .node
-            .ticket(hash, iroh_blobs::BlobFormat::Raw)
-            .await
-            .map_err(to_js_err)?;
-        Ok(ticket.to_string())
     }
 
     /// Starts a streamed import, returns the id to pass to
@@ -388,20 +366,18 @@ impl BlobsNode {
                     _ = &mut cancel => break,
                     item = stream.next() => {
                         let Some(bitfield) = item else { break };
-                        let update = js_sys::Object::new();
-                        let set = |key: &str, value: JsValue| -> Result<(), JsValue> {
-                            js_sys::Reflect::set(&update, &key.into(), &value).map(|_| ())
-                        };
-                        set("bytesDone", JsValue::from_f64(bitfield.total_bytes() as f64))
-                            .and_then(|_| match bitfield.is_complete() {
-                                true => set("bytesTotal", JsValue::from_f64(bitfield.size() as f64)),
-                                false => set("bytesTotal", JsValue::NULL),
-                            })
-                            .and_then(|_| {
-                                set("complete", JsValue::from_bool(bitfield.is_complete()))
-                            })
-                            .expect("progress object keys are valid");
-                        let _ = callback.call1(&JsValue::NULL, &update.into());
+                        let update = js_object(&[
+                            ("bytesDone", JsValue::from_f64(bitfield.total_bytes() as f64)),
+                            (
+                                "bytesTotal",
+                                match bitfield.is_complete() {
+                                    true => JsValue::from_f64(bitfield.size() as f64),
+                                    false => JsValue::NULL,
+                                },
+                            ),
+                            ("complete", JsValue::from_bool(bitfield.is_complete())),
+                        ]);
+                        let _ = callback.call1(&JsValue::NULL, &update);
                         if bitfield.is_complete() {
                             break;
                         }
@@ -445,13 +421,6 @@ impl BlobsNode {
         Ok(status.to_js())
     }
 
-    /// Bytes of the downloaded blob (text spike only).
-    pub async fn get(&self, hash: String) -> Result<Uint8Array, JsError> {
-        let hash: Hash = hash.parse().map_err(to_js_err)?;
-        let bytes = self.node.get_bytes(hash).await.map_err(to_js_err)?;
-        Ok(bytes_to_uint8array(&bytes))
-    }
-
     /// OPFS handle (`FileSystemFileHandle`) of the downloaded blob, for
     /// zero-copy saving on the JS side (`getFile()` → Blob backed by OPFS).
     pub fn save_file(&self, hash: String) -> Result<JsValue, JsError> {
@@ -466,14 +435,10 @@ impl BlobsNode {
     /// `(usage, quota)` of the site's storage, for the UI.
     pub async fn storage_estimate(&self) -> Result<JsValue, JsError> {
         let (usage, quota) = opfs_estimate().await.map_err(|e| JsError::new(&e))?;
-        let obj = js_sys::Object::new();
-        let set = |key: &str, value: f64| -> Result<(), JsValue> {
-            js_sys::Reflect::set(&obj, &key.into(), &JsValue::from_f64(value)).map(|_| ())
-        };
-        set("usage", usage.unwrap_or(0) as f64)
-            .and_then(|_| set("quota", quota.unwrap_or(0) as f64))
-            .map_err(|_| JsError::new("storage estimate failed"))?;
-        Ok(obj.into())
+        Ok(js_object(&[
+            ("usage", JsValue::from_f64(usage.unwrap_or(0) as f64)),
+            ("quota", JsValue::from_f64(quota.unwrap_or(0) as f64)),
+        ]))
     }
 }
 
@@ -483,16 +448,19 @@ fn to_js_err(err: impl Into<anyhow::Error>) -> JsError {
     JsError::new(&err.to_string())
 }
 
+/// Builds a plain JS object from key/value pairs. All keys are static
+/// literals, so a failed `Reflect::set` is a programming error.
+fn js_object(entries: &[(&str, JsValue)]) -> JsValue {
+    let obj = js_sys::Object::new();
+    for (key, value) in entries {
+        js_sys::Reflect::set(&obj, &(*key).into(), value).expect("object keys are valid literals");
+    }
+    obj.into()
+}
+
 /// Copies a `Uint8Array` into a `Bytes`.
 pub fn uint8array_to_bytes(data: &Uint8Array) -> Bytes {
     let mut buffer = vec![0u8; data.length() as usize];
     data.copy_to(&mut buffer[..]);
     Bytes::from(buffer)
-}
-
-/// Copies bytes into a new `Uint8Array`.
-pub fn bytes_to_uint8array(bytes: &[u8]) -> Uint8Array {
-    let array = Uint8Array::new_with_length(bytes.len() as u32);
-    array.copy_from(bytes);
-    array
 }

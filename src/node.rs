@@ -7,7 +7,7 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use data_encoding::BASE64URL_NOPAD;
-use iroh::{Endpoint, EndpointId, address_lookup::MemoryLookup, protocol::Router};
+use iroh::{EndpointId, address_lookup::MemoryLookup, protocol::Router};
 use iroh_blobs::{
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
     api::{Store, blobs::BlobStatus, downloader::Downloader},
@@ -112,11 +112,6 @@ impl BlobsNode {
         self.router.endpoint().id()
     }
 
-    /// The underlying iroh endpoint.
-    pub fn endpoint(&self) -> &Endpoint {
-        self.router.endpoint()
-    }
-
     /// Imports bytes into the store and returns a transfer ticket.
     pub async fn import(&self, data: Bytes) -> Result<BlobTicket> {
         let tag = self
@@ -172,8 +167,8 @@ impl BlobsNode {
     /// Builds a transfer ticket for the blob `hash`, waiting for the
     /// endpoint to come online first.
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
-        self.endpoint().online().await;
-        let addr = self.endpoint().addr();
+        self.router.endpoint().online().await;
+        let addr = self.router.endpoint().addr();
         Ok(BlobTicket::new(addr, hash, format))
     }
 }

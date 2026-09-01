@@ -54,7 +54,7 @@ use n0_future::task::JoinSet;
 use range_collections::range_set::RangeSetRange;
 use tracing::{error, info, trace};
 
-use crate::file::{BlobDir, BlobFile, read_exact_at};
+use crate::file::{BlobDir, BlobFile, read_exact_at, read_some_at};
 
 /// Asynchronous quota check: `Err(msg)` if space is insufficient.
 #[cfg(not(target_arch = "wasm32"))]
@@ -65,10 +65,10 @@ pub type StorageCheck =
 pub type StorageCheck = Arc<dyn Fn(u64) -> Pin<Box<dyn Future<Output = Result<(), String>>>>>;
 
 /// Construction options for the [`LocalStore`].
-#[derive(Default)]
 pub struct Options {
-    /// Storage directory. Defaults to memory (native).
-    pub dir: Option<Arc<dyn BlobDir>>,
+    /// Storage directory holding the blob data and outboard files
+    /// (OPFS on wasm, in-memory for native tests).
+    pub dir: Arc<dyn BlobDir>,
     /// Quota check, called on `ImportBao` before any entry or file is
     /// created, so a rejection leaves nothing behind.
     pub storage_check: Option<StorageCheck>,
@@ -115,7 +115,7 @@ impl LocalStore {
     pub fn new_with_opts(opts: Options) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         let entries: EntriesRef = Arc::new(Mutex::new(HashMap::new()));
-        let dir = opts.dir.unwrap_or_else(default_dir);
+        let dir = opts.dir;
         n0_future::task::spawn(
             Actor {
                 commands: receiver,
@@ -142,40 +142,6 @@ impl LocalStore {
             .unwrap()
             .get(hash)
             .map(|e| e.data.clone())
-    }
-}
-
-fn default_dir() -> Arc<dyn BlobDir> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Arc::new(crate::file::MemDir::new())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        // wasm.rs always builds a LocalStore with an OpfsDir; this fallback
-        // only exists so the code compiles.
-        Arc::new(NullDir)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-struct NullDir;
-
-#[cfg(target_arch = "wasm32")]
-impl BlobDir for NullDir {
-    fn create(
-        &self,
-        _name: &str,
-    ) -> crate::file::DirFut<'_, io::Result<crate::file::BlobFileImpl>> {
-        Box::pin(async {
-            Err(io::Error::other(
-                "no storage directory configured (wasm.rs must pass an OpfsDir)",
-            ))
-        })
-    }
-
-    fn remove(&self, _name: &str) -> crate::file::DirFut<'_, io::Result<()>> {
-        Box::pin(async { Ok(()) })
     }
 }
 
@@ -271,8 +237,7 @@ impl Actor {
         let entry = self.entries.lock().unwrap().remove(hash);
         if let Some(entry) = entry {
             entry.close();
-            let _ = self.dir.remove(&entry.names.0).await;
-            let _ = self.dir.remove(&entry.names.1).await;
+            remove_files(&self.dir, &entry.names).await;
         }
     }
 
@@ -343,10 +308,7 @@ impl Actor {
                     entry.outboard.close();
                     let dir = self.dir.clone();
                     let names = entry.names.clone();
-                    n0_future::task::spawn(async move {
-                        let _ = dir.remove(&names.0).await;
-                        let _ = dir.remove(&names.1).await;
-                    });
+                    n0_future::task::spawn(async move { remove_files(&dir, &names).await });
                 }
             }
         }
@@ -878,6 +840,12 @@ async fn observe(
 
 // === helpers =================================================================
 
+/// Deletes both files (`data`, `outboard`) of an entry from `dir`.
+async fn remove_files(dir: &Arc<dyn BlobDir>, names: &(String, String)) {
+    let _ = dir.remove(&names.0).await;
+    let _ = dir.remove(&names.1).await;
+}
+
 fn chunk_range(leaf: &bao_tree::io::Leaf) -> ChunkRanges {
     let start = ChunkNum::chunks(leaf.offset);
     let end = ChunkNum::chunks(leaf.offset + leaf.data.len() as u64);
@@ -949,20 +917,9 @@ struct FileStreamReader {
 
 impl iroh_io::AsyncStreamReader for FileStreamReader {
     async fn read_bytes(&mut self, len: usize) -> io::Result<Bytes> {
-        let mut buf = vec![0u8; len];
-        let mut done = 0usize;
-        while done < len {
-            let n = self
-                .file
-                .read_at(self.pos + done as u64, &mut buf[done..])?;
-            if n == 0 {
-                break;
-            }
-            done += n;
-        }
-        self.pos += done as u64;
-        buf.truncate(done);
-        Ok(buf.into())
+        let buf = read_some_at(&self.file, self.pos, len)?;
+        self.pos += buf.len() as u64;
+        Ok(buf)
     }
 
     async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
@@ -1004,7 +961,12 @@ mod tests {
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     fn test_store() -> api::Store {
-        LocalStore::new_with_opts(Options::default()).into()
+        use crate::file::MemDir;
+        LocalStore::new_with_opts(Options {
+            dir: Arc::new(MemDir::new()),
+            storage_check: None,
+        })
+        .into()
     }
 
     /// Reference bao encoding (size + parents + leaves) using `bao_tree`'s
@@ -1107,7 +1069,7 @@ mod tests {
         use crate::file::MemDir;
         let dir = Arc::new(MemDir::new());
         let store: api::Store = LocalStore::new_with_opts(Options {
-            dir: Some(dir.clone()),
+            dir: dir.clone(),
             storage_check: None,
         })
         .into();
@@ -1236,7 +1198,7 @@ mod tests {
         });
         let dir = Arc::new(MemDir::new());
         let store: api::Store = LocalStore::new_with_opts(Options {
-            dir: Some(dir.clone()),
+            dir: dir.clone(),
             storage_check: Some(check),
         })
         .into();

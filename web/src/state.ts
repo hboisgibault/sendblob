@@ -9,7 +9,7 @@
 import { batch, createSignal } from "solid-js";
 import { WorkerRpc, type StorageEstimate } from "./protocol";
 import { receiveFile, sendFile } from "./transfer";
-import { encodeLink, parseTicketFromUrl, type ShareLink } from "./ticket";
+import { clearTicketFromUrl, encodeLink, parseTicketFromUrl, type ShareLink } from "./ticket";
 
 export const rpc = new WorkerRpc();
 
@@ -42,7 +42,7 @@ const [copied, setCopied] = createSignal(false);
 
 const pendingUrlShare = parseTicketFromUrl(new URL(location.href));
 const [incoming, setIncoming] = createSignal<ShareLink | null>(pendingUrlShare);
-if (pendingUrlShare) history.replaceState(null, "", location.pathname + location.search);
+if (pendingUrlShare) clearTicketFromUrl();
 
 const [recvProgress, setRecvProgress] = createSignal({ done: 0, total: 0 });
 const [recvError, setRecvError] = createSignal("");

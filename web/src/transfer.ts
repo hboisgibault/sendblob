@@ -65,14 +65,18 @@ export async function receiveFile(
         });
       })
     : null;
+  let observeId: number | null = null;
   try {
-    await rpc.call<number>({ kind: "observe", hash });
+    observeId = await rpc.call<number>({ kind: "observe", hash });
     await rpc.call({ kind: "download", ticket });
-  } catch (err) {
+  } finally {
     unsubscribe?.();
-    throw err;
+    // cancels the store-side subscription too (no-op once it self-terminated
+    // on completion); without this, a failed download leaks the subscription
+    if (observeId !== null) {
+      await rpc.call({ kind: "unobserve", id: observeId }).catch(() => {});
+    }
   }
-  unsubscribe?.();
 
   const status = await rpc.call<BlobStatus>({ kind: "status", hash });
   const size = status.size ?? 0;

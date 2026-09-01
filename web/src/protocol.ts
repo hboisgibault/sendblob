@@ -4,7 +4,6 @@ export type ToWorker =
   | { kind: "spawn" }
   | { kind: "endpoint_id" }
   | { kind: "storage_estimate" }
-  | { kind: "import"; data: Uint8Array }
   | { kind: "import_begin"; size: number }
   | { kind: "import_chunk"; importId: number; data: Uint8Array }
   | { kind: "import_finish"; importId: number }
@@ -15,8 +14,7 @@ export type ToWorker =
   | { kind: "status"; hash: string }
   | { kind: "observe"; hash: string }
   | { kind: "unobserve"; id: number }
-  | { kind: "save"; hash: string }
-  | { kind: "get"; hash: string };
+  | { kind: "save"; hash: string };
 
 /** Snapshot of a blob in the local store (Rust `BlobsNode.status`). */
 export interface BlobStatus {
