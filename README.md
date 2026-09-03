@@ -42,38 +42,6 @@ Prerequisites: Rust with the `wasm32-unknown-unknown` target,
 - `npm run typecheck` — TypeScript check
 - `cargo test --all-features` — Rust tests
 
-## Architecture
-
-```
-┌─────────────  web/  ─────────────┐   ┌─── src/ (Rust) ────┐
-│ main.tsx     UI (Solid)          │   │ node.rs   iroh endpoint + │
-│ state.ts     signals + actions   │   │           blobs protocol   │
-│ transfer.ts  send/receive pipeline│  │ wasm.rs   wasm-bindgen API │
-│ protocol.ts  typed worker RPC    │◄─►│ store.rs  OPFS blob store  │
-│ worker.ts    worker + OPFS purge │   │ file.rs   OPFS/mem files   │
-└──────────────────────────────────┘   └────────────────────────────┘
-```
-
-- **`node.rs`** — sets up the iroh endpoint (public relays + discovery),
-  the blob store and the protocol router. Transfers go through the
-  standard iroh-blobs ALPN, so a browser node interoperates with the CLI
-  and any iroh-blobs peer.
-- **`store.rs`** — custom local store (irpc actor, same architecture as
-  upstream `MemStore`): data and outboards live in files instead of RAM,
-  with sparse validated writes for downloads and an injectable quota check.
-- **`file.rs`** — the file abstraction behind the store: OPFS sync access
-  handles in the browser, in-memory files for native tests.
-- **`wasm.rs`** — the `wasm-bindgen` surface consumed by the TypeScript
-  frontend (import/download/status/observe).
-- **`web/`** — the frontend: a Solid UI (`main.tsx`, single screen with
-  auto-start, QR share and native mobile share) on top of a reusable
-  pipeline (`transfer.ts`) talking to the WASM node through a typed,
-  event-aware worker RPC (`protocol.ts`).
-
-The browser node is ephemeral by design: each tab owns its OPFS
-subdirectory, a Web Locks-based purge reclaims the storage of dead tabs,
-and closing the tab stops the node.
-
 ---
 
 *Inspired by the `browser-blobs` example from the [n0-computer/iroh](https://github.com/n0-computer/iroh) team.*
