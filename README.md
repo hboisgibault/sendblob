@@ -1,23 +1,48 @@
-# ⚡ sendblob
+# sendblob
 
-> Instant, browser-to-browser P2P file transfers powered by **Iroh** and **WebAssembly**. No clouds, no middleman, no registration.
+Share a file from your browser using iroh-blobs: [sendblob.app](https://sendblob.app). Drop a file, share the ticket or link, and the recipient downloads it — from another browser tab or from any iroh-blobs node (e.g. the companion CLI).
 
-**sendblob** turns your browser tab into a temporary, high-performance P2P storage node. Drop a file, share the generated ticket or link, and stream the data directly to the recipient using the QUIC-powered Iroh protocol. Once you close the tab, your node stops and all traces vanish.
+## How it works
 
-### ✨ Key Features
+- Each tab runs an ephemeral iroh node (WASM + OPFS store) speaking the
+  standard iroh-blobs protocol.
+- Sharing = importing bytes into the local store + handing out a ticket
+  (`blob…` or the 88-char compact form embedded in the link).
+- Receiving = resolving the ticket, downloading and validating chunks
+  into OPFS, then saving to disk.
 
-- 🔒 **True Zero-Server P2P:** Files travel directly from browser to browser.
-- ⚡ **Powered by Iroh & WASM:** Leverages `iroh-blobs` compiled to WebAssembly for ultra-fast BLAKE3-hashed transfers.
-- 🛡️ **End-to-End Encrypted & Secure:** Built on QUIC and NAT-traversal primitives out of the box.
-- 🧹 **Ephemeral by Design:** No persistent cloud storage. Closing the browser tab terminates the node immediately.
+Works with any iroh node: browser tabs interoperate with the native CLI
+(`provide` / `download`) and other iroh-blobs peers over the same ALPN.
 
-### 🛠️ Tech Stack
+## Network reality
 
-- **Engine:** Rust, `iroh-blobs`, `wasm-bindgen` (via `browser-blobs`)
-- **Frontend:** HTML5 / Tailwind CSS / TypeScript
-- **Transport:** QUIC / WebTransport via Iroh Network
+- This is not direct browser-to-browser P2P today. Browsers cannot open
+  direct QUIC/TCP connections, so traffic is relayed through public iroh
+  relays, with discovery to find the sender.
+- Relayed traffic stays end-to-end encrypted by iroh: relays forward
+  bytes but cannot read file contents. They do see metadata (endpoints,
+  volumes) and are a hard dependency — no relay, no transfer.
+- Direct browser connectivity should come via WebTransport support in
+  iroh. Until then, expect relay bandwidth/latency and relay availability
+  to bound performance.
 
-### 🏗️ Architecture
+## Ephemeral by design
+
+Closing the tab stops the node. Files live in a per-tab OPFS directory,
+reclaimed by a Web Locks-based purge; nothing is uploaded to persistent
+cloud storage by sendblob itself.
+
+## Development
+
+Prerequisites: Rust with the `wasm32-unknown-unknown` target,
+`wasm-bindgen-cli` 0.2.127 (must match the crate version), Node.js 24.
+
+- `npm run dev` — build the WASM module and start the Vite dev server
+- `npm run build` — production build (WASM + frontend)
+- `npm run typecheck` — TypeScript check
+- `cargo test --all-features` — Rust tests
+
+## Architecture
 
 ```
 ┌─────────────  web/  ─────────────┐   ┌─── src/ (Rust) ────┐
@@ -29,10 +54,10 @@
 └──────────────────────────────────┘   └────────────────────────────┘
 ```
 
-- **`node.rs`** — sets up the iroh endpoint (N0 presets: public relays +
-  DNS/pkarr discovery), the blob store and the protocol router. Transfers go
-  through the standard iroh-blobs ALPN, so a browser node interoperates with
-  the CLI and any iroh-blobs peer.
+- **`node.rs`** — sets up the iroh endpoint (public relays + discovery),
+  the blob store and the protocol router. Transfers go through the
+  standard iroh-blobs ALPN, so a browser node interoperates with the CLI
+  and any iroh-blobs peer.
 - **`store.rs`** — custom local store (irpc actor, same architecture as
   upstream `MemStore`): data and outboards live in files instead of RAM,
   with sparse validated writes for downloads and an injectable quota check.
